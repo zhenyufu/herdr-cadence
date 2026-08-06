@@ -1,0 +1,23 @@
+[package]
+name = "herdr-cadence"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Project-local Codex and OpenCode orchestration for Herdr"
+repository = "https://github.com/zhenyufu/herdr-cadence"
+
+[[bin]]
+name = "herdr-cadence"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+fs2 = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3.20"

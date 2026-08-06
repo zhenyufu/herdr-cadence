@@ -1,0 +1,52 @@
+id = "herdr-cadence"
+name = "Cadence"
+version = "0.1.0"
+min_herdr_version = "0.7.5"
+description = "Orchestrate Codex and OpenCode workers in isolated Herdr worktrees"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["sh", "scripts/install-release.sh"]
+
+[[startup]]
+command = ["bin/herdr-cadence", "startup"]
+
+[[actions]]
+id = "enable-project"
+title = "Cadence: Enable project"
+description = "Create .herdr/cadence.toml in the current Git repository"
+contexts = ["workspace"]
+command = ["bin/herdr-cadence", "action", "enable-project"]
+
+[[actions]]
+id = "disable-project"
+title = "Cadence: Disable project"
+description = "Disable Cadence while preserving its project configuration"
+contexts = ["workspace"]
+command = ["bin/herdr-cadence", "action", "disable-project"]
+
+[[actions]]
+id = "start"
+title = "Cadence: Start Orchestrator"
+description = "Start or focus this project's Orchestrator"
+contexts = ["workspace"]
+command = ["bin/herdr-cadence", "action", "start"]
+
+[[actions]]
+id = "status"
+title = "Cadence: Status"
+description = "Print this project's active run and Worker status"
+contexts = ["workspace"]
+command = ["bin/herdr-cadence", "action", "status"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["bin/herdr-cadence", "event"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["bin/herdr-cadence", "event"]
+
+[[events]]
+on = "pane.exited"
+command = ["bin/herdr-cadence", "event"]
