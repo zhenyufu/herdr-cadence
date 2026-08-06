@@ -122,6 +122,29 @@ impl Herdr {
         parse_created(&self.checked(args)?)
     }
 
+    pub fn create_worker_tab(
+        &self,
+        workspace_id: &str,
+        root: &Path,
+        label: &str,
+    ) -> Result<CreatedTerminal> {
+        let args = vec![
+            "tab".to_string(),
+            "create".into(),
+            "--workspace".into(),
+            workspace_id.into(),
+            "--cwd".into(),
+            root.display().to_string(),
+            "--label".into(),
+            label.into(),
+            "--no-focus".into(),
+        ];
+        let mut terminal = parse_created(&self.checked(args)?)?;
+        terminal.workspace_id = None;
+        terminal.checkout_path = Some(root.display().to_string());
+        Ok(terminal)
+    }
+
     pub fn start_agent(
         &self,
         name: &str,
@@ -149,6 +172,11 @@ impl Herdr {
 
     pub fn remove_worktree(&self, workspace_id: &str) -> Result<()> {
         self.checked(["worktree", "remove", "--workspace", workspace_id])?;
+        Ok(())
+    }
+
+    pub fn close_tab(&self, tab_id: &str) -> Result<()> {
+        self.checked(["tab", "close", tab_id])?;
         Ok(())
     }
 }

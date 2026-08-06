@@ -57,12 +57,16 @@ pub struct Worker {
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default = "worktree_enabled")]
+    pub use_worktree: bool,
     pub branch: String,
     pub base_sha: String,
     pub agent_name: String,
     pub status: WorkerStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -197,6 +201,10 @@ fn generalist_role() -> String {
     crate::config::GENERALIST_ROLE.into()
 }
 
+fn worktree_enabled() -> bool {
+    true
+}
+
 pub fn normalize_scope(value: &str) -> anyhow::Result<String> {
     let value = value.trim().trim_start_matches("./").trim_end_matches('/');
     anyhow::ensure!(!value.is_empty(), "scope cannot contain an empty path");
@@ -284,5 +292,24 @@ mod tests {
         }))
         .unwrap();
         assert!(request.validate_and_normalize().is_err());
+    }
+
+    #[test]
+    fn treats_workers_from_older_state_as_worktree_workers() {
+        let worker: Worker = serde_json::from_value(serde_json::json!({
+            "id": "worker-1",
+            "title": "Legacy worker",
+            "task": "Test compatibility",
+            "scope": ["src"],
+            "acceptance": ["Tests pass"],
+            "harness": "codex",
+            "branch": "cadence/legacy/worker-1",
+            "base_sha": "abc123",
+            "agent_name": "cadence-legacy-w1",
+            "status": "working"
+        }))
+        .unwrap();
+
+        assert!(worker.use_worktree);
     }
 }

@@ -143,6 +143,7 @@ impl App {
             &run,
             &config.workers,
             config.max_parallel(),
+            config.git.use_worktrees,
         );
         self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
         self.state.update(|store| {
@@ -177,7 +178,10 @@ impl App {
 
     pub fn spawn_worker(&self, request_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
-        git::ensure_clean(&self.root)?;
+        let use_worktree = config.git.use_worktrees;
+        if use_worktree {
+            git::ensure_clean(&self.root)?;
+        }
         let request: WorkerRequest = serde_json::from_reader(
             fs::File::open(request_file)
                 .with_context(|| format!("cannot open {}", request_file.display()))?,
@@ -190,6 +194,14 @@ impl App {
         let role_model = role_model.map(str::to_string);
         let max_parallel = config.max_parallel();
         let key = project_key(&self.root);
+        if !use_worktree {
+            let run = self.active_run_snapshot(&key)?;
+            ensure!(
+                git::current_branch(&self.root)? == run.base_branch,
+                "base checkout changed branches; expected {}",
+                run.base_branch
+            );
+        }
         let base_sha = git::head(&self.root)?;
         let worker = self.state.update(|store| {
             let run = active_run_mut(store, &key)?;
@@ -229,6 +241,11 @@ impl App {
             } else {
                 title_slug
             };
+            let branch = if use_worktree {
+                format!("cadence/{}/{}-{}", short_run_id(&run.id), id, title_slug)
+            } else {
+                run.base_branch.clone()
+            };
             let worker = Worker {
                 id: id.clone(),
                 title: request.title.clone(),
@@ -239,11 +256,13 @@ impl App {
                 role_description: role_description.clone(),
                 harness,
                 model,
-                branch: format!("cadence/{}/{}-{}", short_run_id(&run.id), id, title_slug),
+                use_worktree,
+                branch,
                 base_sha: base_sha.clone(),
                 agent_name: format!("cadence-{}-w{number}", &key[..6]),
                 status: WorkerStatus::Starting,
                 workspace_id: None,
+                tab_id: None,
                 pane_id: None,
                 checkout_path: None,
                 observed_agent_status: None,
@@ -256,22 +275,33 @@ impl App {
 
         let run = self.active_run_snapshot(&key)?;
         let label = format!("Cadence: {}", truncate(&worker.title, 40));
-        let terminal = match self.herdr.create_worker_worktree(
-            &run.base_workspace_id,
-            &self.root,
-            &worker.branch,
-            &worker.base_sha,
-            &label,
-        ) {
+        let terminal = match if worker.use_worktree {
+            self.herdr.create_worker_worktree(
+                &run.base_workspace_id,
+                &self.root,
+                &worker.branch,
+                &worker.base_sha,
+                &label,
+            )
+        } else {
+            self.herdr
+                .create_worker_tab(&run.base_workspace_id, &self.root, &label)
+        } {
             Ok(terminal) => terminal,
             Err(error) => {
                 self.fail_worker(&key, &worker.id, &error.to_string())?;
-                return Err(error.context("failed to create Worker worktree"));
+                let resource = if worker.use_worktree {
+                    "worktree"
+                } else {
+                    "tab"
+                };
+                return Err(error.context(format!("failed to create Worker {resource}")));
             }
         };
         self.state.update(|store| {
             let stored = worker_mut(active_run_mut(store, &key)?, &worker.id)?;
             stored.workspace_id = terminal.workspace_id.clone();
+            stored.tab_id = Some(terminal.tab_id.clone());
             stored.pane_id = Some(terminal.pane_id.clone());
             stored.checkout_path = terminal.checkout_path.clone();
             Ok(())
@@ -342,7 +372,7 @@ impl App {
                 self.store_report(&key, worker_id, report, WorkerStatus::Failed)?;
                 self.notify(
                     &key,
-                    &format!("Worker {worker_id} failed. Its worktree was retained."),
+                    &format!("Worker {worker_id} failed. Its changes were retained."),
                 );
                 self.worker_status(worker_id)
             }
@@ -355,14 +385,45 @@ impl App {
                         .as_deref()
                         .context("Worker checkout is unavailable")?,
                 );
-                git::ensure_clean(&checkout)?;
-                let worker_head = git::head(&checkout)?;
-                ensure!(
-                    git::is_ancestor(&checkout, &worker.base_sha, &worker_head)?,
-                    "Worker history no longer descends from its assigned base"
-                );
-                ensure!(worker_head != worker.base_sha, "Worker produced no commits");
-                let changed_paths = git::changed_paths(&checkout, &worker.base_sha, &worker_head)?;
+                let (worker_head, changed_paths) = if worker.use_worktree {
+                    git::ensure_clean(&checkout)?;
+                    let worker_head = git::head(&checkout)?;
+                    ensure!(
+                        git::is_ancestor(&checkout, &worker.base_sha, &worker_head)?,
+                        "Worker history no longer descends from its assigned base"
+                    );
+                    ensure!(worker_head != worker.base_sha, "Worker produced no commits");
+                    if let Some(reported) = report.commit_sha.as_deref() {
+                        ensure!(
+                            reported == worker_head,
+                            "reported commit_sha is not Worker HEAD"
+                        );
+                    }
+                    let changed_paths =
+                        git::changed_paths(&checkout, &worker.base_sha, &worker_head)?;
+                    (worker_head, changed_paths)
+                } else {
+                    let reported_commit = report
+                        .commit_sha
+                        .as_deref()
+                        .context("shared-checkout Workers must report commit_sha")?;
+                    let worker_commit = git::resolve_commit(&checkout, reported_commit)?;
+                    ensure!(
+                        worker_commit != worker.base_sha,
+                        "Worker produced no commits"
+                    );
+                    ensure!(
+                        git::is_ancestor(&checkout, &worker.base_sha, &worker_commit)?,
+                        "Worker commit does not descend from its assigned base"
+                    );
+                    let current_head = git::head(&checkout)?;
+                    ensure!(
+                        git::is_ancestor(&checkout, &worker_commit, &current_head)?,
+                        "Worker commit is not on the current base branch"
+                    );
+                    let changed_paths = git::changed_paths_for_commit(&checkout, &worker_commit)?;
+                    (worker_commit, changed_paths)
+                };
                 ensure!(!changed_paths.is_empty(), "Worker commits changed no paths");
                 let outside_scope = changed_paths
                     .iter()
@@ -374,12 +435,6 @@ impl App {
                     "Worker changed paths outside its reserved scope: {}",
                     outside_scope.join(", ")
                 );
-                if let Some(reported) = report.commit_sha.as_deref() {
-                    ensure!(
-                        reported == worker_head,
-                        "reported commit_sha is not Worker HEAD"
-                    );
-                }
                 report.commit_sha = Some(worker_head);
                 report.changed_paths = changed_paths;
                 self.store_report(&key, worker_id, report, WorkerStatus::Completed)?;
@@ -418,6 +473,19 @@ impl App {
                 "base checkout changed branches; expected {}",
                 run.base_branch
             );
+            if !worker.use_worktree {
+                let commit = worker
+                    .report
+                    .as_ref()
+                    .and_then(|report| report.commit_sha.as_deref())
+                    .context("Worker report omitted commit_sha")?;
+                let current_head = git::head(&self.root)?;
+                ensure!(
+                    git::is_ancestor(&self.root, commit, &current_head)?,
+                    "Worker commit is not on the current base branch"
+                );
+                return Ok(());
+            }
             git::ensure_clean(&self.root)?;
             let checkout = PathBuf::from(
                 worker
@@ -437,7 +505,14 @@ impl App {
                     stored.error = None;
                     Ok(())
                 })?;
-                self.notify(&key, &format!("Worker {worker_id} integrated successfully. Review its report; it will be cleaned up after exit."));
+                let message = if worker.use_worktree {
+                    format!(
+                        "Worker {worker_id} integrated successfully. Review its report; its worktree will be cleaned up after exit."
+                    )
+                } else {
+                    format!("Worker {worker_id} completed successfully on the shared base branch.")
+                };
+                self.notify(&key, &message);
                 if config.git.cleanup_on_success && !self.herdr.agent_exists(&worker.agent_name) {
                     self.cleanup_worker(&key, worker_id)?;
                 }
@@ -450,7 +525,7 @@ impl App {
                     stored.error = Some(error.to_string());
                     Ok(())
                 })?;
-                self.notify(&key, &format!("Worker {worker_id} could not integrate. The cherry-pick was aborted and its worktree was retained."));
+                self.notify(&key, &format!("Worker {worker_id} could not integrate. Its changes and isolated resources were retained."));
                 self.worker_status(worker_id)
             }
         }
@@ -500,13 +575,11 @@ impl App {
                 worker.status
             );
         }
-        if let Some(worker) = run
-            .workers
-            .values()
-            .find(|w| w.status == WorkerStatus::Integrated && w.workspace_id.is_some())
-        {
+        if let Some(worker) = run.workers.values().find(|w| {
+            w.status == WorkerStatus::Integrated && (w.workspace_id.is_some() || w.tab_id.is_some())
+        }) {
             bail!(
-                "Worker {} is integrated but still running; let it exit so Cadence can clean its worktree",
+                "Worker {} is integrated but still running; let it exit so Cadence can clean its resources",
                 worker.id
             );
         }
@@ -725,7 +798,7 @@ impl App {
             self.notify(
                 key,
                 &format!(
-                    "Worker {worker_id} exited without completing; its worktree was retained."
+                    "Worker {worker_id} exited without completing; its changes and isolated resources were retained."
                 ),
             );
         }
@@ -739,18 +812,26 @@ impl App {
             .get(worker_id)
             .context("unknown Worker")?
             .clone();
-        if let Some(workspace_id) = worker.workspace_id.as_deref() {
-            self.herdr.remove_worktree(workspace_id)?;
+        if worker.use_worktree {
+            if let Some(workspace_id) = worker.workspace_id.as_deref() {
+                self.herdr.remove_worktree(workspace_id)?;
+            }
+        } else if let Some(tab_id) = worker.tab_id.as_deref() {
+            let _ = self.herdr.close_tab(tab_id);
         }
         self.state.update(|store| {
             let stored = worker_mut(active_run_mut(store, key)?, worker_id)?;
             stored.workspace_id = None;
+            stored.tab_id = None;
             stored.pane_id = None;
             stored.checkout_path = None;
             Ok(())
         })?;
-        let root = PathBuf::from(self.project_root_for_key(key)?);
-        git::delete_branch(&root, &worker.branch)
+        if worker.use_worktree {
+            let root = PathBuf::from(self.project_root_for_key(key)?);
+            git::delete_branch(&root, &worker.branch)?;
+        }
+        Ok(())
     }
 }
 

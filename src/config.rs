@@ -55,6 +55,8 @@ pub struct RoleConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GitConfig {
+    #[serde(default)]
+    pub use_worktrees: bool,
     pub auto_integrate: bool,
     pub cleanup_on_success: bool,
 }
@@ -111,6 +113,7 @@ impl Default for Config {
                 roles: BTreeMap::new(),
             },
             git: GitConfig {
+                use_worktrees: false,
                 auto_integrate: true,
                 cleanup_on_success: true,
             },
@@ -263,6 +266,7 @@ mod tests {
         assert!(raw.contains("max_parallel = 4"));
         assert_eq!(parsed.orchestrator.max_parallel, Some(4));
         assert_eq!(parsed.workers.max_parallel, None);
+        assert!(!parsed.git.use_worktrees);
     }
 
     #[test]

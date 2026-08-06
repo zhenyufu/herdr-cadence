@@ -10,10 +10,16 @@ pub fn orchestrator(
     run: &Run,
     workers: &WorkerConfig,
     max_parallel: usize,
+    use_worktrees: bool,
 ) -> String {
     let roles = workers.role_catalog();
+    let checkout_guidance = if use_worktrees {
+        "Workers run in isolated Herdr worktrees."
+    } else {
+        "Workers run in separate tabs but share the base checkout. Keep their path scopes non-overlapping."
+    };
     format!(
-        r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. Plan and coordinate implementation; delegate bounded implementation tasks to Workers instead of doing those tasks yourself. Workers are isolated in Herdr worktrees.
+        r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. Plan and coordinate implementation; delegate bounded implementation tasks to Workers instead of doing those tasks yourself. {checkout_guidance}
 
 Available Worker roles:
 {roles}
@@ -29,6 +35,7 @@ Do not invent task dependencies or let Workers delegate. Keep the user informed 
         root = project_root.display(),
         roles = roles,
         max = max_parallel,
+        checkout_guidance = checkout_guidance,
     )
 }
 
@@ -51,6 +58,11 @@ pub fn worker(
         .map(|v| format!("- {v}"))
         .collect::<Vec<_>>()
         .join("\n");
+    let git_guidance = if worker.use_worktree {
+        "Commit all completed work in this isolated worktree."
+    } else {
+        "You share the base checkout with other Workers. Stage only paths in your allowed scope, create exactly one commit for this task, and include its commit_sha in the report."
+    };
     format!(
         r#"You are a Cadence Worker in run {run_id}. Complete exactly this one task; do not delegate or broaden scope.
 
@@ -62,7 +74,7 @@ Allowed scope:
 Acceptance criteria:
 {acceptance}
 
-Follow repository instructions. Modify only the allowed scope, run relevant tests, and commit all completed work. Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
+Follow repository instructions. Modify only the allowed scope and run relevant tests. {git_guidance} Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
   {bin} --state-dir {state} --project-root {root} worker complete {worker_id} --report-file <path>
 
 If completion returns integrated, exit the agent. If blocked, remain available for an Orchestrator follow-up."#,
@@ -72,6 +84,7 @@ If completion returns integrated, exit the agent. If blocked, remain available f
         run_id = run_id,
         scope = scope,
         acceptance = acceptance,
+        git_guidance = git_guidance,
         bin = binary.display(),
         state = state_dir.display(),
         root = project_root.display(),

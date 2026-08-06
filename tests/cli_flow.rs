@@ -20,6 +20,22 @@ fn git(root: &Path, args: &[&str]) {
     );
 }
 
+fn git_stdout(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {}: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
 fn repo() -> tempfile::TempDir {
     let temp = tempfile::tempdir().unwrap();
     git(temp.path(), &["init", "-b", "main"]);
@@ -64,6 +80,7 @@ fn enables_and_reports_project_status() {
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
     assert_eq!(parsed.orchestrator.max_parallel, Some(4));
     assert_eq!(parsed.workers.max_parallel, None);
+    assert!(!parsed.git.use_worktrees);
     assert!(!repo.path().join("AGENTS.md").exists());
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);
@@ -74,7 +91,16 @@ fn enables_and_reports_project_status() {
 }
 
 #[test]
-fn starts_orchestrator_and_spawns_scoped_worker_with_fake_herdr() {
+fn runs_worker_in_shared_checkout_by_default() {
+    run_worker_flow(false);
+}
+
+#[test]
+fn runs_worker_in_configured_worktree() {
+    run_worker_flow(true);
+}
+
+fn run_worker_flow(use_worktrees: bool) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -95,6 +121,9 @@ fn starts_orchestrator_and_spawns_scoped_worker_with_fake_herdr() {
             "harness = \"codex\"\nmodel = \"worker-model\"",
             1,
         );
+    if use_worktrees {
+        config = config.replace("use_worktrees = false", "use_worktrees = true");
+    }
     config.push_str(
         "\n[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"opencode\"\nmodel = \"qa-model\"\n",
     );
@@ -113,7 +142,11 @@ fn starts_orchestrator_and_spawns_scoped_worker_with_fake_herdr() {
 printf '%s\n' "$*" >> '{}'
 if [ "$1 $2" = "agent get" ]; then exit 1; fi
 if [ "$1 $2" = "tab create" ]; then
-  printf '%s\n' '{{"id":"test","result":{{"tab":{{"tab_id":"tab-1"}},"root_pane":{{"pane_id":"pane-orch"}}}}}}'
+  case "$*" in
+    *"Cadence Orchestrator"*) tab_id="tab-orch"; pane_id="pane-orch" ;;
+    *) tab_id="tab-worker"; pane_id="pane-worker" ;;
+  esac
+  printf '%s\n' "{{\"id\":\"test\",\"result\":{{\"tab\":{{\"tab_id\":\"$tab_id\"}},\"root_pane\":{{\"pane_id\":\"$pane_id\"}}}}}}"
 elif [ "$1 $2" = "worktree create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"worker-ws"}},"tab":{{"tab_id":"worker-tab"}},"root_pane":{{"pane_id":"pane-worker"}},"worktree":{{"path":"{}"}}}}}}'
 elif [ "$1 $2" = "worktree remove" ]; then
@@ -180,9 +213,13 @@ fi
     let value: serde_json::Value = serde_json::from_slice(&spawn.stdout).unwrap();
     assert_eq!(value["worker_id"], "worker-1");
     assert_eq!(value["role"], "qa");
-    assert_eq!(value["workspace_id"], "worker-ws");
+    if use_worktrees {
+        assert_eq!(value["workspace_id"], "worker-ws");
+    } else {
+        assert!(value["workspace_id"].is_null());
+    }
 
-    let calls = fs::read_to_string(log).unwrap();
+    let calls = fs::read_to_string(&log).unwrap();
     assert!(calls.contains("tab create --workspace base-ws"));
     assert!(calls.contains("agent start cadence-orch-"));
     assert!(calls.contains("--kind opencode"));
@@ -191,7 +228,15 @@ fi
     assert!(calls.contains(
         "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
     ));
-    assert!(calls.contains("worktree create --workspace base-ws"));
+    if use_worktrees {
+        assert!(calls.contains("worktree create --workspace base-ws"));
+        assert!(calls.contains("Workers run in isolated Herdr worktrees"));
+    } else {
+        assert!(!calls.contains("worktree create --workspace base-ws"));
+        assert!(calls.contains("--label Cadence: Add API --no-focus"));
+        assert!(calls.contains("share the base checkout"));
+        assert!(calls.contains("create exactly one commit for this task"));
+    }
     assert!(calls.contains("agent start cadence-"));
     assert!(
         calls.contains("--kind opencode --pane pane-worker --timeout 120000 -- --model qa-model")
@@ -200,27 +245,36 @@ fi
     assert!(calls.contains("Role guidance: Use for test validation"));
     assert!(calls.contains("agent prompt"));
 
-    fs::remove_dir(&worker_path).unwrap();
-    let branch = value["branch"].as_str().unwrap();
-    git(
-        repo.path(),
-        &[
-            "worktree",
-            "add",
-            "-b",
-            branch,
-            worker_path.to_str().unwrap(),
-            "HEAD",
-        ],
-    );
-    fs::create_dir_all(worker_path.join("src/api")).unwrap();
-    fs::write(worker_path.join("src/api/mod.rs"), "pub fn ready() {}\n").unwrap();
-    git(&worker_path, &["add", "src/api/mod.rs"]);
-    git(&worker_path, &["commit", "-m", "add api"]);
+    let checkout = if use_worktrees {
+        fs::remove_dir(&worker_path).unwrap();
+        let branch = value["branch"].as_str().unwrap();
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worker_path.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        worker_path.clone()
+    } else {
+        assert_eq!(value["branch"], "main");
+        repo.path().to_path_buf()
+    };
+    fs::create_dir_all(checkout.join("src/api")).unwrap();
+    fs::write(checkout.join("src/api/mod.rs"), "pub fn ready() {}\n").unwrap();
+    git(&checkout, &["add", "src/api/mod.rs"]);
+    git(&checkout, &["commit", "-m", "add api"]);
+    let commit_sha = git_stdout(&checkout, &["rev-parse", "HEAD"]);
     let report = fake_dir.path().join("report.json");
     fs::write(
         &report,
-        r#"{"status":"completed","summary":"Added API","tests":["cargo test"],"changed_paths":[],"blockers":[]}"#,
+        format!(
+            r#"{{"status":"completed","summary":"Added API","tests":["cargo test"],"changed_paths":[],"blockers":[],"commit_sha":"{commit_sha}"}}"#
+        ),
     )
     .unwrap();
     let complete = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
@@ -250,6 +304,12 @@ fi
         fs::read_to_string(repo.path().join("src/api/mod.rs")).unwrap(),
         "pub fn ready() {}\n"
     );
+    let calls = fs::read_to_string(&log).unwrap();
+    if use_worktrees {
+        assert!(calls.contains("worktree remove --workspace worker-ws"));
+    } else {
+        assert!(calls.contains("tab close tab-worker"));
+    }
 }
 
 #[test]

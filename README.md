@@ -1,6 +1,6 @@
 # Cadence
 
-Cadence is a Herdr plugin that gives one Codex or OpenCode **Orchestrator** a small fleet of isolated **Workers**. You talk to the Orchestrator; Cadence creates Worker worktrees and tabs, tracks reports, and integrates clean commits.
+Cadence is a Herdr plugin that gives one Codex or OpenCode **Orchestrator** a small fleet of **Workers**. You talk to the Orchestrator; Cadence creates Worker tabs, tracks reports, and can optionally isolate work in Git worktrees.
 
 ## Install
 
@@ -51,15 +51,16 @@ harness = "codex"
 # model = "your-qa-model-id"
 
 [git]
+use_worktrees = false
 auto_integrate = true
 cleanup_on_success = true
 ```
 
 The top-level `[workers]` harness and model define the `generalist` fallback. The Orchestrator chooses a named role from its description and uses `generalist` when none is a good match. When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model. A Worker request can override its role's harness/model, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
 
-For compatibility, Cadence still accepts `max_parallel` under `[workers]` in existing schema-version-1 configs, but it cannot be set in both sections.
+For compatibility, Cadence still accepts `max_parallel` under `[workers]` in existing schema-version-1 configs, but it cannot be set in both sections. Workers use the shared project checkout by default; set `git.use_worktrees = true` for isolated branches and checkouts.
 
-Successful Workers must commit clean work. Cadence cherry-picks their commits onto the original branch and cleans their worktree after the agent exits. Failed, cancelled, or conflicting Workers are retained for inspection; failed cherry-picks are aborted automatically.
+Successful Workers must commit clean work. In shared-checkout mode, each Worker commits only its reserved scope directly on the base branch. In worktree mode, Cadence cherry-picks completed commits and cleans successful worktrees after their agents exit. Failed, cancelled, or conflicting worktrees are retained for inspection; failed cherry-picks are aborted automatically.
 
 View the current run with:
 

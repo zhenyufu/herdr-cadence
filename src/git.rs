@@ -43,6 +43,14 @@ pub fn head(root: &Path) -> Result<String> {
     checked(root, &["rev-parse", "HEAD"])
 }
 
+pub fn resolve_commit(root: &Path, revision: &str) -> Result<String> {
+    let commit = format!("{revision}^{{commit}}");
+    checked(
+        root,
+        &["rev-parse", "--verify", "--end-of-options", &commit],
+    )
+}
+
 pub fn ensure_clean(root: &Path) -> Result<()> {
     let status = checked(root, &["status", "--porcelain"])?;
     if !status.is_empty() {
@@ -91,6 +99,10 @@ pub fn changed_paths(root: &Path, base: &str, head: &str) -> Result<Vec<String>>
                 .context("Cadence cannot integrate a non-UTF-8 Git path")
         })
         .collect()
+}
+
+pub fn changed_paths_for_commit(root: &Path, commit: &str) -> Result<Vec<String>> {
+    changed_paths(root, &format!("{commit}^"), commit)
 }
 
 pub fn cherry_pick(root: &Path, commits: &[String]) -> Result<()> {
@@ -225,5 +237,16 @@ mod tests {
             fs::read_to_string(repo.path().join("file.txt")).unwrap(),
             "orchestrator\n"
         );
+    }
+
+    #[test]
+    fn resolves_commit_revisions_to_object_ids() {
+        let repo = repository();
+
+        assert_eq!(
+            resolve_commit(repo.path(), "HEAD").unwrap(),
+            head(repo.path()).unwrap()
+        );
+        assert!(resolve_commit(repo.path(), "--help").is_err());
     }
 }
