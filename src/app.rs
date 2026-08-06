@@ -142,6 +142,7 @@ impl App {
             &self.root,
             &run,
             &config.workers,
+            config.max_parallel(),
         );
         self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
         self.state.update(|store| {
@@ -187,6 +188,7 @@ impl App {
         let role_name = role_name.to_string();
         let role_description = role_description.to_string();
         let role_model = role_model.map(str::to_string);
+        let max_parallel = config.max_parallel();
         let key = project_key(&self.root);
         let base_sha = git::head(&self.root)?;
         let worker = self.state.update(|store| {
@@ -198,9 +200,9 @@ impl App {
                 .filter(|w| w.status.occupies_slot())
                 .count();
             ensure!(
-                active < config.workers.max_parallel,
+                active < max_parallel,
                 "worker limit reached ({})",
-                config.workers.max_parallel
+                max_parallel
             );
             if let Some(conflict) = run
                 .workers

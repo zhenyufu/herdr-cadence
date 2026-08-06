@@ -9,6 +9,7 @@ pub fn orchestrator(
     project_root: &Path,
     run: &Run,
     workers: &WorkerConfig,
+    max_parallel: usize,
 ) -> String {
     let roles = workers.role_catalog();
     format!(
@@ -27,7 +28,7 @@ Do not invent task dependencies or let Workers delegate. Keep the user informed 
         state = state_dir.display(),
         root = project_root.display(),
         roles = roles,
-        max = workers.max_parallel,
+        max = max_parallel,
     )
 }
 

@@ -61,6 +61,9 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("harness = \"codex\""));
     assert!(config.contains("generalist_description ="));
     assert!(config.contains("# [workers.roles.research]"));
+    let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
+    assert_eq!(parsed.orchestrator.max_parallel, Some(4));
+    assert_eq!(parsed.workers.max_parallel, None);
     assert!(!repo.path().join("AGENTS.md").exists());
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);

@@ -24,6 +24,8 @@ pub struct AgentConfig {
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_parallel: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,7 +36,9 @@ pub struct WorkerConfig {
     pub model: Option<String>,
     #[serde(default = "default_generalist_description")]
     pub generalist_description: String,
-    pub max_parallel: usize,
+    // Accepted for schema v1 compatibility; new configs place this under orchestrator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_parallel: Option<usize>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub roles: BTreeMap<String, RoleConfig>,
 }
@@ -97,12 +101,13 @@ impl Default for Config {
             orchestrator: AgentConfig {
                 harness: Harness::Codex,
                 model: None,
+                max_parallel: Some(4),
             },
             workers: WorkerConfig {
                 harness: WorkerHarness::Inherit,
                 model: None,
                 generalist_description: default_generalist_description(),
-                max_parallel: 4,
+                max_parallel: None,
                 roles: BTreeMap::new(),
             },
             git: GitConfig {
@@ -164,8 +169,11 @@ impl Config {
         if self.schema_version != 1 {
             bail!("unsupported config schema_version {}", self.schema_version);
         }
-        if !(1..=16).contains(&self.workers.max_parallel) {
-            bail!("workers.max_parallel must be between 1 and 16");
+        if self.orchestrator.max_parallel.is_some() && self.workers.max_parallel.is_some() {
+            bail!("max_parallel cannot be set under both orchestrator and workers");
+        }
+        if !(1..=16).contains(&self.max_parallel()) {
+            bail!("orchestrator.max_parallel must be between 1 and 16");
         }
         validate_model(self.orchestrator.model.as_deref())?;
         validate_role(
@@ -185,6 +193,13 @@ impl Config {
             validate_role(name, &role.description, role.model.as_deref())?;
         }
         Ok(())
+    }
+
+    pub fn max_parallel(&self) -> usize {
+        self.orchestrator
+            .max_parallel
+            .or(self.workers.max_parallel)
+            .unwrap_or(4)
     }
 }
 
@@ -246,12 +261,14 @@ mod tests {
         let parsed: Config = toml::from_str(&raw).unwrap();
         assert_eq!(parsed, Config::default());
         assert!(raw.contains("max_parallel = 4"));
+        assert_eq!(parsed.orchestrator.max_parallel, Some(4));
+        assert_eq!(parsed.workers.max_parallel, None);
     }
 
     #[test]
     fn rejects_unbounded_parallelism() {
         let mut config = Config::default();
-        config.workers.max_parallel = 0;
+        config.orchestrator.max_parallel = Some(0);
         assert!(config.validate().is_err());
     }
 
@@ -323,12 +340,22 @@ cleanup_on_success = true
 "#;
 
         let config: Config = toml::from_str(raw).unwrap();
+        assert_eq!(config.orchestrator.max_parallel, None);
+        assert_eq!(config.max_parallel(), 4);
         assert_eq!(
             config.workers.generalist_description,
             default_generalist_description()
         );
         assert!(config.workers.roles.is_empty());
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_parallelism_in_both_config_sections() {
+        let mut config = Config::default();
+        config.workers.max_parallel = Some(2);
+
+        assert!(config.validate().is_err());
     }
 
     #[test]

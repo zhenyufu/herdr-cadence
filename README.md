@@ -33,12 +33,12 @@ enabled = true
 [orchestrator]
 harness = "codex" # or "opencode"
 # model = "your-model-id" # optional; omit to use the harness default
+max_parallel = 4
 
 [workers]
 harness = "inherit" # or "codex" / "opencode"
 # model = "your-model-id" # optional; omit to use the harness default
 generalist_description = "Use for general implementation tasks that do not match a specialized role"
-max_parallel = 4
 
 [workers.roles.research]
 description = "Use for investigation and evidence gathering"
@@ -56,6 +56,8 @@ cleanup_on_success = true
 ```
 
 The top-level `[workers]` harness and model define the `generalist` fallback. The Orchestrator chooses a named role from its description and uses `generalist` when none is a good match. When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model. A Worker request can override its role's harness/model, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
+
+For compatibility, Cadence still accepts `max_parallel` under `[workers]` in existing schema-version-1 configs, but it cannot be set in both sections.
 
 Successful Workers must commit clean work. Cadence cherry-picks their commits onto the original branch and cleans their worktree after the agent exits. Failed, cancelled, or conflicting Workers are retained for inspection; failed cherry-picks are aborted automatically.
 
