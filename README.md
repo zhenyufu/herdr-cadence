@@ -62,6 +62,15 @@ For compatibility, Cadence still accepts `max_parallel` under `[workers]` in exi
 
 Successful Workers must commit clean work. In shared-checkout mode, each Worker commits only its reserved scope directly on the base branch. In worktree mode, Cadence cherry-picks completed commits and cleans successful worktrees after their agents exit. Failed, cancelled, or conflicting worktrees are retained for inspection; failed cherry-picks are aborted automatically.
 
+## Injected context
+
+Cadence sends one compact startup prompt to each agent:
+
+- The Orchestrator receives its run ID, coordination rules, checkout mode, concurrency limit, configured role names and descriptions, and the commands for managing Workers and finishing the run.
+- A Worker receives only its role and role description, assigned task, allowed path scope, acceptance criteria, checkout-specific Git instructions, and the command for submitting its report.
+
+Cadence does not inject source files, diffs, the full configuration or state store, other Workers' tasks or reports, or conversation history. The selected harness may independently load repository instructions such as `AGENTS.md` and inspect files as it works. Later Cadence messages are short status notifications to the Orchestrator or explicit follow-up prompts sent to a Worker.
+
 View the current run with:
 
 ```sh
