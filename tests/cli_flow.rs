@@ -59,7 +59,8 @@ fn enables_and_reports_project_status() {
     );
     let config = fs::read_to_string(repo.path().join(".herdr/cadence.toml")).unwrap();
     assert!(config.contains("harness = \"codex\""));
-    assert_eq!(config.matches("# model = \"your-model-id\"").count(), 2);
+    assert!(config.contains("generalist_description ="));
+    assert!(config.contains("# [workers.roles.research]"));
     assert!(!repo.path().join("AGENTS.md").exists());
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);
@@ -79,16 +80,22 @@ fn starts_orchestrator_and_spawns_scoped_worker_with_fake_herdr() {
             .success()
     );
     let config_path = repo.path().join(".herdr/cadence.toml");
-    let config = fs::read_to_string(&config_path)
+    let mut config = fs::read_to_string(&config_path)
         .unwrap()
-        .replace(
+        .replacen(
             "harness = \"codex\"\n# model = \"your-model-id\"",
             "harness = \"opencode\"\nmodel = \"orchestrator-model\"",
+            1,
         )
-        .replace(
+        .replacen(
             "harness = \"inherit\"\n# model = \"your-model-id\"",
             "harness = \"codex\"\nmodel = \"worker-model\"",
+            1,
         );
+    config.push_str(
+        "\n[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"opencode\"\nmodel = \"qa-model\"\n",
+    );
+    toml::from_str::<herdr_cadence::config::Config>(&config).unwrap();
     fs::write(&config_path, config).unwrap();
     git(repo.path(), &["add", ".herdr/cadence.toml"]);
     git(repo.path(), &["commit", "-m", "enable cadence"]);
@@ -145,7 +152,7 @@ fi
     let request = fake_dir.path().join("request.json");
     fs::write(
         &request,
-        r#"{"title":"Add API","task":"Implement the API","scope":["src/api"],"acceptance":["Tests pass"]}"#,
+        r#"{"title":"Add API","task":"Implement the API","scope":["src/api"],"acceptance":["Tests pass"],"role":"qa"}"#,
     )
     .unwrap();
     let spawn = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
@@ -169,21 +176,25 @@ fi
     );
     let value: serde_json::Value = serde_json::from_slice(&spawn.stdout).unwrap();
     assert_eq!(value["worker_id"], "worker-1");
+    assert_eq!(value["role"], "qa");
     assert_eq!(value["workspace_id"], "worker-ws");
 
     let calls = fs::read_to_string(log).unwrap();
     assert!(calls.contains("tab create --workspace base-ws"));
     assert!(calls.contains("agent start cadence-orch-"));
     assert!(calls.contains("--kind opencode"));
+    assert!(calls.contains("- qa: Use for test validation"));
+    assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
     assert!(calls.contains(
         "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
     ));
     assert!(calls.contains("worktree create --workspace base-ws"));
     assert!(calls.contains("agent start cadence-"));
-    assert!(calls.contains("--kind codex"));
     assert!(
-        calls.contains("--kind codex --pane pane-worker --timeout 120000 -- --model worker-model")
+        calls.contains("--kind opencode --pane pane-worker --timeout 120000 -- --model qa-model")
     );
+    assert!(calls.contains("Role: qa"));
+    assert!(calls.contains("Role guidance: Use for test validation"));
     assert!(calls.contains("agent prompt"));
 
     fs::remove_dir(&worker_path).unwrap();

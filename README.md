@@ -37,14 +37,25 @@ harness = "codex" # or "opencode"
 [workers]
 harness = "inherit" # or "codex" / "opencode"
 # model = "your-model-id" # optional; omit to use the harness default
+generalist_description = "Use for general implementation tasks that do not match a specialized role"
 max_parallel = 4
+
+[workers.roles.research]
+description = "Use for investigation and evidence gathering"
+harness = "inherit"
+# model = "your-research-model-id"
+
+[workers.roles.qa]
+description = "Use for test planning, validation, and regression investigation"
+harness = "codex"
+# model = "your-qa-model-id"
 
 [git]
 auto_integrate = true
 cleanup_on_success = true
 ```
 
-When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model; set `workers.model` when all Workers should use a specific model. A Worker request can override its default harness/model, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
+The top-level `[workers]` harness and model define the `generalist` fallback. The Orchestrator chooses a named role from its description and uses `generalist` when none is a good match. When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model. A Worker request can override its role's harness/model, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
 
 Successful Workers must commit clean work. Cadence cherry-picks their commits onto the original branch and cleans their worktree after the agent exits. Failed, cancelled, or conflicting Workers are retained for inspection; failed cherry-picks are aborted automatically.
 

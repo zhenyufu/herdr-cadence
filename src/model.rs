@@ -50,6 +50,10 @@ pub struct Worker {
     pub task: String,
     pub scope: Vec<String>,
     pub acceptance: Vec<String>,
+    #[serde(default = "generalist_role")]
+    pub role: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role_description: String,
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -117,6 +121,8 @@ pub struct WorkerRequest {
     pub scope: Vec<String>,
     pub acceptance: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<Harness>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -156,6 +162,8 @@ impl WorkerRequest {
         );
         self.title = self.title.trim().to_string();
         self.task = self.task.trim().to_string();
+        self.role = self.role.map(|role| role.trim().to_string());
+        anyhow::ensure!(self.role.as_deref() != Some(""), "role cannot be empty");
         self.scope = self
             .scope
             .into_iter()
@@ -183,6 +191,10 @@ impl WorkerRequest {
         }
         Ok(self)
     }
+}
+
+fn generalist_role() -> String {
+    crate::config::GENERALIST_ROLE.into()
 }
 
 pub fn normalize_scope(value: &str) -> anyhow::Result<String> {
@@ -246,5 +258,31 @@ mod tests {
             "src/api-old/mod.rs",
             &["src/api".into()]
         ));
+    }
+
+    #[test]
+    fn normalizes_and_rejects_worker_roles() {
+        let request: WorkerRequest = serde_json::from_value(serde_json::json!({
+            "title": "Test API",
+            "task": "Run API tests",
+            "scope": ["src/api"],
+            "acceptance": ["Tests pass"],
+            "role": " qa "
+        }))
+        .unwrap();
+        assert_eq!(
+            request.validate_and_normalize().unwrap().role.as_deref(),
+            Some("qa")
+        );
+
+        let request: WorkerRequest = serde_json::from_value(serde_json::json!({
+            "title": "Test API",
+            "task": "Run API tests",
+            "scope": ["src/api"],
+            "acceptance": ["Tests pass"],
+            "role": " "
+        }))
+        .unwrap();
+        assert!(request.validate_and_normalize().is_err());
     }
 }

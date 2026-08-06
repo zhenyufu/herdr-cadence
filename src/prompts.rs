@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config::WorkerConfig;
 use crate::model::{Run, Worker};
 
 pub fn orchestrator(
@@ -7,12 +8,16 @@ pub fn orchestrator(
     state_dir: &Path,
     project_root: &Path,
     run: &Run,
-    max: usize,
+    workers: &WorkerConfig,
 ) -> String {
+    let roles = workers.role_catalog();
     format!(
         r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. Plan and coordinate implementation; delegate bounded implementation tasks to Workers instead of doing those tasks yourself. Workers are isolated in Herdr worktrees.
 
-Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. Create a JSON request with title, task, scope, acceptance, and optional harness/model, then run:
+Available Worker roles:
+{roles}
+
+Choose the role whose description best matches each task. Use `generalist` when no specialized role is a good match. Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. Create a JSON request with title, task, scope, acceptance, and role, then run:
   {bin} --state-dir {state} --project-root {root} worker spawn --request-file <path>
 Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. Cadence integrates clean commits automatically. Resolve retained failures/conflicts with the user. When no Workers are active and the orchestration is finished, run `run finish` with the same global flags.
 
@@ -21,6 +26,8 @@ Do not invent task dependencies or let Workers delegate. Keep the user informed 
         bin = binary.display(),
         state = state_dir.display(),
         root = project_root.display(),
+        roles = roles,
+        max = workers.max_parallel,
     )
 }
 
@@ -46,6 +53,8 @@ pub fn worker(
     format!(
         r#"You are a Cadence Worker in run {run_id}. Complete exactly this one task; do not delegate or broaden scope.
 
+Role: {role}
+Role guidance: {role_description}
 Task: {task}
 Allowed scope:
 {scope}
@@ -57,6 +66,8 @@ Follow repository instructions. Modify only the allowed scope, run relevant test
 
 If completion returns integrated, exit the agent. If blocked, remain available for an Orchestrator follow-up."#,
         task = worker.task,
+        role = worker.role,
+        role_description = worker.role_description,
         run_id = run_id,
         scope = scope,
         acceptance = acceptance,

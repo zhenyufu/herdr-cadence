@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::config::Config;
+use crate::config::{Config, GENERALIST_ROLE};
 use crate::git;
 use crate::herdr::Herdr;
 use crate::model::{
@@ -141,7 +141,7 @@ impl App {
             self.state.dir(),
             &self.root,
             &run,
-            config.workers.max_parallel,
+            &config.workers,
         );
         self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
         self.state.update(|store| {
@@ -182,6 +182,11 @@ impl App {
                 .with_context(|| format!("cannot open {}", request_file.display()))?,
         )?;
         let request = request.validate_and_normalize()?;
+        let role_name = request.role.as_deref().unwrap_or(GENERALIST_ROLE);
+        let (role_description, role_harness, role_model) = config.workers.role(Some(role_name))?;
+        let role_name = role_name.to_string();
+        let role_description = role_description.to_string();
+        let role_model = role_model.map(str::to_string);
         let key = project_key(&self.root);
         let base_sha = git::head(&self.root)?;
         let worker = self.state.update(|store| {
@@ -214,11 +219,8 @@ impl App {
             let id = format!("worker-{number}");
             let harness = request
                 .harness
-                .unwrap_or_else(|| config.workers.harness.resolve(config.orchestrator.harness));
-            let model = request
-                .model
-                .clone()
-                .or_else(|| config.workers.model.clone());
+                .unwrap_or_else(|| role_harness.resolve(config.orchestrator.harness));
+            let model = request.model.clone().or_else(|| role_model.clone());
             let title_slug = slug(&request.title, 20);
             let title_slug = if title_slug.is_empty() {
                 "task".to_string()
@@ -231,6 +233,8 @@ impl App {
                 task: request.task.clone(),
                 scope: request.scope.clone(),
                 acceptance: request.acceptance.clone(),
+                role: role_name.clone(),
+                role_description: role_description.clone(),
                 harness,
                 model,
                 branch: format!("cadence/{}/{}-{}", short_run_id(&run.id), id, title_slug),
@@ -286,7 +290,7 @@ impl App {
             Ok(())
         })?;
         Ok(
-            json!({"status": "working", "worker_id": worker.id, "agent": worker.agent_name, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
+            json!({"status": "working", "worker_id": worker.id, "role": worker.role, "agent": worker.agent_name, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
         )
     }
 
