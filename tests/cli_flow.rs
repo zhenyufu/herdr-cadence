@@ -59,6 +59,7 @@ fn enables_and_reports_project_status() {
     );
     let config = fs::read_to_string(repo.path().join(".herdr/cadence.toml")).unwrap();
     assert!(config.contains("harness = \"codex\""));
+    assert_eq!(config.matches("# model = \"your-model-id\"").count(), 2);
     assert!(!repo.path().join("AGENTS.md").exists());
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);
@@ -80,8 +81,14 @@ fn starts_orchestrator_and_spawns_scoped_worker_with_fake_herdr() {
     let config_path = repo.path().join(".herdr/cadence.toml");
     let config = fs::read_to_string(&config_path)
         .unwrap()
-        .replace("harness = \"codex\"", "harness = \"opencode\"")
-        .replace("harness = \"inherit\"", "harness = \"codex\"");
+        .replace(
+            "harness = \"codex\"\n# model = \"your-model-id\"",
+            "harness = \"opencode\"\nmodel = \"orchestrator-model\"",
+        )
+        .replace(
+            "harness = \"inherit\"\n# model = \"your-model-id\"",
+            "harness = \"codex\"\nmodel = \"worker-model\"",
+        );
     fs::write(&config_path, config).unwrap();
     git(repo.path(), &["add", ".herdr/cadence.toml"]);
     git(repo.path(), &["commit", "-m", "enable cadence"]);
@@ -168,9 +175,15 @@ fi
     assert!(calls.contains("tab create --workspace base-ws"));
     assert!(calls.contains("agent start cadence-orch-"));
     assert!(calls.contains("--kind opencode"));
+    assert!(calls.contains(
+        "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
+    ));
     assert!(calls.contains("worktree create --workspace base-ws"));
     assert!(calls.contains("agent start cadence-"));
     assert!(calls.contains("--kind codex"));
+    assert!(
+        calls.contains("--kind codex --pane pane-worker --timeout 120000 -- --model worker-model")
+    );
     assert!(calls.contains("agent prompt"));
 
     fs::remove_dir(&worker_path).unwrap();

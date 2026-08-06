@@ -32,9 +32,11 @@ enabled = true
 
 [orchestrator]
 harness = "codex" # or "opencode"
+# model = "your-model-id" # optional; omit to use the harness default
 
 [workers]
 harness = "inherit" # or "codex" / "opencode"
+# model = "your-model-id" # optional; omit to use the harness default
 max_parallel = 4
 
 [git]
@@ -42,7 +44,7 @@ auto_integrate = true
 cleanup_on_success = true
 ```
 
-Add `model = "..."` under either agent section when needed. A Worker request can override its default harness/model, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
+When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model; set `workers.model` when all Workers should use a specific model. A Worker request can override its default harness/model, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
 
 Successful Workers must commit clean work. Cadence cherry-picks their commits onto the original branch and cleans their worktree after the agent exits. Failed, cancelled, or conflicting Workers are retained for inspection; failed cherry-picks are aborted automatically.
 

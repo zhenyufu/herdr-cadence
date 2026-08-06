@@ -119,7 +119,18 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&path, toml::to_string_pretty(&Self::default())?)?;
+        let raw = toml::to_string_pretty(&Self::default())?
+            .replacen(
+                "harness = \"codex\"\n",
+                "harness = \"codex\"\n# model = \"your-model-id\"\n",
+                1,
+            )
+            .replacen(
+                "harness = \"inherit\"\n",
+                "harness = \"inherit\"\n# model = \"your-model-id\"\n",
+                1,
+            );
+        fs::write(&path, raw)?;
         Ok(path)
     }
 
@@ -136,8 +147,16 @@ impl Config {
         if !(1..=16).contains(&self.workers.max_parallel) {
             bail!("workers.max_parallel must be between 1 and 16");
         }
-        if self.orchestrator.model.as_deref() == Some("")
-            || self.workers.model.as_deref() == Some("")
+        if self
+            .orchestrator
+            .model
+            .as_deref()
+            .is_some_and(|model| model.trim().is_empty())
+            || self
+                .workers
+                .model
+                .as_deref()
+                .is_some_and(|model| model.trim().is_empty())
         {
             bail!("model values cannot be empty");
         }
@@ -161,6 +180,27 @@ mod tests {
     fn rejects_unbounded_parallelism() {
         let mut config = Config::default();
         config.workers.max_parallel = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_configured_models() {
+        let mut config = Config::default();
+        config.orchestrator.model = Some("orchestrator-model".into());
+        config.workers.model = Some("worker-model".into());
+
+        let raw = toml::to_string_pretty(&config).unwrap();
+        let parsed: Config = toml::from_str(&raw).unwrap();
+
+        assert_eq!(parsed, config);
+        assert!(parsed.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_blank_models() {
+        let mut config = Config::default();
+        config.orchestrator.model = Some("   ".into());
+
         assert!(config.validate().is_err());
     }
 }

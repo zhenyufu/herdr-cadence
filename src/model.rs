@@ -174,7 +174,11 @@ impl WorkerRequest {
                 .all(|criterion| !criterion.is_empty()),
             "acceptance criteria cannot contain empty values"
         );
-        if self.model.as_deref() == Some("") {
+        if self
+            .model
+            .as_deref()
+            .is_some_and(|model| model.trim().is_empty())
+        {
             anyhow::bail!("model cannot be empty");
         }
         Ok(self)
