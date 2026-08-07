@@ -23,10 +23,10 @@ pub struct Run {
     pub status: RunStatus,
     pub base_branch: String,
     pub base_workspace_id: String,
-    pub orchestrator: AgentRef,
+    pub lead: AgentRef,
     pub created_unix_ms: u128,
-    pub next_worker: u32,
-    pub workers: BTreeMap<String, Worker>,
+    pub next_agent: u32,
+    pub agents: BTreeMap<String, Agent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 }
@@ -48,7 +48,7 @@ pub struct AgentRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Worker {
+pub struct Agent {
     pub id: String,
     pub title: String,
     pub task: String,
@@ -70,7 +70,7 @@ pub struct Worker {
     pub branch: String,
     pub base_sha: String,
     pub agent_name: String,
-    pub status: WorkerStatus,
+    pub status: AgentStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,7 +82,7 @@ pub struct Worker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_agent_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub report: Option<WorkerReport>,
+    pub report: Option<AgentReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -97,7 +97,7 @@ pub enum RunStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkerStatus {
+pub enum AgentStatus {
     Starting,
     Working,
     Blocked,
@@ -109,7 +109,7 @@ pub enum WorkerStatus {
     Conflict,
 }
 
-impl WorkerStatus {
+impl AgentStatus {
     pub fn occupies_slot(&self) -> bool {
         matches!(
             self,
@@ -127,7 +127,7 @@ impl WorkerStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerRequest {
+pub struct AgentRequest {
     pub title: String,
     pub task: String,
     pub scope: Vec<String>,
@@ -144,7 +144,7 @@ pub struct WorkerRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerReport {
+pub struct AgentReport {
     pub status: ReportStatus,
     pub summary: String,
     #[serde(default)]
@@ -165,7 +165,7 @@ pub enum ReportStatus {
     Failed,
 }
 
-impl WorkerRequest {
+impl AgentRequest {
     pub fn validate_and_normalize(mut self) -> anyhow::Result<Self> {
         anyhow::ensure!(!self.title.trim().is_empty(), "title cannot be empty");
         anyhow::ensure!(!self.task.trim().is_empty(), "task cannot be empty");
@@ -279,8 +279,8 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_and_rejects_worker_roles() {
-        let request: WorkerRequest = serde_json::from_value(serde_json::json!({
+    fn normalizes_and_rejects_agent_roles() {
+        let request: AgentRequest = serde_json::from_value(serde_json::json!({
             "title": "Test API",
             "task": "Run API tests",
             "scope": ["src/api"],
@@ -293,7 +293,7 @@ mod tests {
             Some("qa")
         );
 
-        let request: WorkerRequest = serde_json::from_value(serde_json::json!({
+        let request: AgentRequest = serde_json::from_value(serde_json::json!({
             "title": "Test API",
             "task": "Run API tests",
             "scope": ["src/api"],
@@ -305,23 +305,23 @@ mod tests {
     }
 
     #[test]
-    fn treats_workers_from_older_state_as_worktree_workers() {
-        let worker: Worker = serde_json::from_value(serde_json::json!({
-            "id": "worker-1",
-            "title": "Legacy worker",
+    fn treats_agents_from_older_state_as_worktree_agents() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "id": "agent-1",
+            "title": "Legacy agent",
             "task": "Test compatibility",
             "scope": ["src"],
             "acceptance": ["Tests pass"],
             "harness": "codex",
-            "branch": "cadence/legacy/worker-1",
+            "branch": "cadence/legacy/agent-1",
             "base_sha": "abc123",
-            "agent_name": "cadence-legacy-w1",
+            "agent_name": "cadence-legacy-a1",
             "status": "working"
         }))
         .unwrap();
 
-        assert!(worker.use_worktree);
-        assert!(!worker.yolo);
-        assert_eq!(worker.reasoning_effort, ReasoningEffort::Default);
+        assert!(agent.use_worktree);
+        assert!(!agent.yolo);
+        assert_eq!(agent.reasoning_effort, ReasoningEffort::Default);
     }
 }

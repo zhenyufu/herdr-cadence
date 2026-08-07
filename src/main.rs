@@ -27,9 +27,9 @@ enum Command {
         #[command(subcommand)]
         command: RunCommand,
     },
-    Worker {
+    Agent {
         #[command(subcommand)]
-        command: WorkerCommand,
+        command: AgentCommand,
     },
 }
 
@@ -49,33 +49,33 @@ enum RunCommand {
 }
 
 #[derive(Subcommand)]
-enum WorkerCommand {
+enum AgentCommand {
     Spawn {
         #[arg(long)]
         request_file: PathBuf,
     },
     List,
     Status {
-        worker_id: String,
+        agent_id: String,
     },
     Report {
-        worker_id: String,
+        agent_id: String,
     },
     Complete {
-        worker_id: String,
+        agent_id: String,
         #[arg(long)]
         report_file: PathBuf,
     },
     Integrate {
-        worker_id: String,
+        agent_id: String,
     },
     Prompt {
-        worker_id: String,
+        agent_id: String,
         #[arg(long)]
         prompt_file: PathBuf,
     },
     Cancel {
-        worker_id: String,
+        agent_id: String,
     },
 }
 
@@ -130,21 +130,21 @@ fn run() -> Result<()> {
             RunCommand::Status => app.status()?,
             RunCommand::Finish => app.finish_run()?,
         },
-        Command::Worker { command } => match command {
-            WorkerCommand::Spawn { request_file } => app.spawn_worker(&request_file)?,
-            WorkerCommand::List => app.list_workers()?,
-            WorkerCommand::Status { worker_id } => app.worker_status(&worker_id)?,
-            WorkerCommand::Report { worker_id } => app.worker_report(&worker_id)?,
-            WorkerCommand::Complete {
-                worker_id,
+        Command::Agent { command } => match command {
+            AgentCommand::Spawn { request_file } => app.spawn_agent(&request_file)?,
+            AgentCommand::List => app.list_agents()?,
+            AgentCommand::Status { agent_id } => app.agent_status(&agent_id)?,
+            AgentCommand::Report { agent_id } => app.agent_report(&agent_id)?,
+            AgentCommand::Complete {
+                agent_id,
                 report_file,
-            } => app.complete_worker(&worker_id, &report_file)?,
-            WorkerCommand::Integrate { worker_id } => app.integrate_worker(&worker_id)?,
-            WorkerCommand::Prompt {
-                worker_id,
+            } => app.complete_agent(&agent_id, &report_file)?,
+            AgentCommand::Integrate { agent_id } => app.integrate_agent(&agent_id)?,
+            AgentCommand::Prompt {
+                agent_id,
                 prompt_file,
-            } => app.prompt_worker(&worker_id, &prompt_file)?,
-            WorkerCommand::Cancel { worker_id } => app.cancel_worker(&worker_id)?,
+            } => app.prompt_agent(&agent_id, &prompt_file)?,
+            AgentCommand::Cancel { agent_id } => app.cancel_agent(&agent_id)?,
         },
     };
     println!("{}", serde_json::to_string_pretty(&value)?);

@@ -15,11 +15,11 @@ pub struct Config {
     pub enabled: bool,
     #[serde(default)]
     pub yolo: bool,
-    #[serde(default = "default_worker_role")]
-    pub worker_default: String,
-    pub orchestrator: AgentConfig,
+    #[serde(default = "default_agent_role")]
+    pub agent_default: String,
+    pub lead: AgentConfig,
     pub git: GitConfig,
-    pub workers: WorkerConfig,
+    pub agents: AgentRoles,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct WorkerConfig {
+pub struct AgentRoles {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub roles: BTreeMap<String, RoleConfig>,
 }
@@ -45,7 +45,7 @@ pub struct WorkerConfig {
 #[serde(deny_unknown_fields)]
 pub struct RoleConfig {
     pub description: String,
-    pub harness: WorkerHarness,
+    pub harness: AgentHarness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default)]
@@ -110,16 +110,16 @@ impl Harness {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum WorkerHarness {
+pub enum AgentHarness {
     Inherit,
     Codex,
     Opencode,
 }
 
-impl WorkerHarness {
-    pub fn resolve(self, orchestrator: Harness) -> Harness {
+impl AgentHarness {
+    pub fn resolve(self, lead: Harness) -> Harness {
         match self {
-            Self::Inherit => orchestrator,
+            Self::Inherit => lead,
             Self::Codex => Harness::Codex,
             Self::Opencode => Harness::Opencode,
         }
@@ -132,8 +132,8 @@ impl Default for Config {
             schema_version: 1,
             enabled: true,
             yolo: false,
-            worker_default: GENERALIST_ROLE.into(),
-            orchestrator: AgentConfig {
+            agent_default: GENERALIST_ROLE.into(),
+            lead: AgentConfig {
                 harness: Harness::Codex,
                 model: Some("gpt-5.6-terra".into()),
                 reasoning_effort: ReasoningEffort::High,
@@ -143,7 +143,7 @@ impl Default for Config {
                 auto_integrate: true,
                 cleanup_on_success: true,
             },
-            workers: WorkerConfig {
+            agents: AgentRoles {
                 roles: default_roles(),
             },
         }
@@ -189,32 +189,32 @@ impl Config {
             bail!("unsupported config schema_version {}", self.schema_version);
         }
         if !(1..=16).contains(&self.max_parallel()) {
-            bail!("orchestrator.max_parallel must be between 1 and 16");
+            bail!("lead.max_parallel must be between 1 and 16");
         }
-        validate_model(self.orchestrator.model.as_deref())?;
+        validate_model(self.lead.model.as_deref())?;
         validate_reasoning_effort(
-            "orchestrator",
-            self.orchestrator.harness,
-            self.orchestrator.model.as_deref(),
-            self.orchestrator.reasoning_effort,
+            "lead",
+            self.lead.harness,
+            self.lead.model.as_deref(),
+            self.lead.reasoning_effort,
         )?;
-        if self.worker_default.trim() != self.worker_default || self.worker_default.is_empty() {
-            bail!("worker_default cannot be empty or have surrounding whitespace");
+        if self.agent_default.trim() != self.agent_default || self.agent_default.is_empty() {
+            bail!("agent_default cannot be empty or have surrounding whitespace");
         }
-        if !self.workers.roles.contains_key(&self.worker_default) {
+        if !self.agents.roles.contains_key(&self.agent_default) {
             bail!(
-                "worker_default references unknown role {:?}",
-                self.worker_default
+                "agent_default references unknown role {:?}",
+                self.agent_default
             );
         }
-        for (name, role) in &self.workers.roles {
+        for (name, role) in &self.agents.roles {
             if name.trim() != name || name.is_empty() {
-                bail!("worker role names cannot be empty or have surrounding whitespace");
+                bail!("agent role names cannot be empty or have surrounding whitespace");
             }
             validate_role(name, &role.description, role.model.as_deref())?;
             validate_reasoning_effort(
-                &format!("workers.roles.{name}"),
-                role.harness.resolve(self.orchestrator.harness),
+                &format!("agents.roles.{name}"),
+                role.harness.resolve(self.lead.harness),
                 role.model.as_deref(),
                 role.reasoning_effort,
             )?;
@@ -223,17 +223,17 @@ impl Config {
     }
 
     pub fn max_parallel(&self) -> usize {
-        self.orchestrator.max_parallel.unwrap_or(4)
+        self.lead.max_parallel.unwrap_or(4)
     }
 }
 
-impl WorkerConfig {
+impl AgentRoles {
     pub fn role(
         &self,
         name: &str,
     ) -> Result<(
         &str,
-        WorkerHarness,
+        AgentHarness,
         Option<&str>,
         ReasoningEffort,
         VersionControlMode,
@@ -241,7 +241,7 @@ impl WorkerConfig {
         let role = self
             .roles
             .get(name)
-            .with_context(|| format!("unknown Worker role {name:?}"))?;
+            .with_context(|| format!("unknown agent role {name:?}"))?;
         Ok((
             &role.description,
             role.harness,
@@ -282,7 +282,7 @@ impl VersionControlMode {
     }
 }
 
-fn default_worker_role() -> String {
+fn default_agent_role() -> String {
     GENERALIST_ROLE.into()
 }
 
@@ -294,7 +294,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                 description:
                     "Use for general implementation tasks that do not match a specialized role"
                         .into(),
-                harness: WorkerHarness::Codex,
+                harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-terra".into()),
                 reasoning_effort: ReasoningEffort::Medium,
                 version_control_mode: VersionControlMode::GitWorktree,
@@ -304,7 +304,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             "planner".into(),
             RoleConfig {
                 description: "Use for plan mode".into(),
-                harness: WorkerHarness::Codex,
+                harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-sol".into()),
                 reasoning_effort: ReasoningEffort::Xhigh,
                 version_control_mode: VersionControlMode::SharedCheckout,
@@ -314,7 +314,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             "research".into(),
             RoleConfig {
                 description: "Use for investigation and evidence gathering".into(),
-                harness: WorkerHarness::Codex,
+                harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-sol".into()),
                 reasoning_effort: ReasoningEffort::High,
                 version_control_mode: VersionControlMode::SharedCheckout,
@@ -325,7 +325,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             RoleConfig {
                 description: "Use for test planning, validation, and regression investigation"
                     .into(),
-                harness: WorkerHarness::Codex,
+                harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-luna".into()),
                 reasoning_effort: ReasoningEffort::Medium,
                 version_control_mode: VersionControlMode::SharedCheckout,
@@ -338,7 +338,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
 
 fn validate_role(name: &str, description: &str, model: Option<&str>) -> Result<()> {
     if description.trim().is_empty() {
-        bail!("worker role {name:?} description cannot be empty");
+        bail!("agent role {name:?} description cannot be empty");
     }
     validate_model(model)
 }
@@ -378,10 +378,10 @@ mod tests {
         assert_eq!(parsed, Config::default());
         assert!(raw.contains("max_parallel = 4"));
         assert!(!parsed.yolo);
-        assert_eq!(parsed.worker_default, GENERALIST_ROLE);
-        assert_eq!(parsed.orchestrator.max_parallel, Some(4));
-        let generalist = parsed.workers.role(GENERALIST_ROLE).unwrap();
-        assert_eq!(generalist.1, WorkerHarness::Codex);
+        assert_eq!(parsed.agent_default, GENERALIST_ROLE);
+        assert_eq!(parsed.lead.max_parallel, Some(4));
+        let generalist = parsed.agents.role(GENERALIST_ROLE).unwrap();
+        assert_eq!(generalist.1, AgentHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
         assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::GitWorktree);
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn rejects_unbounded_parallelism() {
         let mut config = Config::default();
-        config.orchestrator.max_parallel = Some(0);
+        config.lead.max_parallel = Some(0);
         assert!(config.validate().is_err());
     }
 
@@ -407,10 +407,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_removed_worker_yolo_setting() {
+    fn rejects_removed_agent_yolo_setting() {
         let raw = toml::to_string_pretty(&Config::default()).unwrap().replace(
-            "[workers.roles.generalist]\n",
-            "[workers.roles.generalist]\nyolo_with_worktrees_only = true\n",
+            "[agents.roles.generalist]\n",
+            "[agents.roles.generalist]\nyolo_with_worktrees_only = true\n",
         );
         assert!(toml::from_str::<Config>(&raw).is_err());
     }
@@ -436,8 +436,8 @@ mod tests {
     #[test]
     fn accepts_configured_models() {
         let mut config = Config::default();
-        config.orchestrator.model = Some("orchestrator-model".into());
-        config.workers.roles.get_mut(GENERALIST_ROLE).unwrap().model = Some("worker-model".into());
+        config.lead.model = Some("lead-model".into());
+        config.agents.roles.get_mut(GENERALIST_ROLE).unwrap().model = Some("agent-model".into());
 
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
@@ -449,19 +449,19 @@ mod tests {
     #[test]
     fn accepts_extra_high_reasoning() {
         let mut config = Config::default();
-        config.orchestrator.reasoning_effort = ReasoningEffort::Xhigh;
+        config.lead.reasoning_effort = ReasoningEffort::Xhigh;
 
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
 
-        assert_eq!(parsed.orchestrator.reasoning_effort, ReasoningEffort::Xhigh);
+        assert_eq!(parsed.lead.reasoning_effort, ReasoningEffort::Xhigh);
         assert!(parsed.validate().is_ok());
     }
 
     #[test]
     fn rejects_blank_models() {
         let mut config = Config::default();
-        config.orchestrator.model = Some("   ".into());
+        config.lead.model = Some("   ".into());
 
         assert!(config.validate().is_err());
     }
@@ -469,44 +469,44 @@ mod tests {
     #[test]
     fn requires_a_model_for_opencode_reasoning() {
         let mut config = Config::default();
-        config.orchestrator.harness = Harness::Opencode;
-        config.orchestrator.model = None;
+        config.lead.harness = Harness::Opencode;
+        config.lead.model = None;
 
         assert!(config.validate().is_err());
 
-        config.orchestrator.model = Some("openai/gpt-5.2".into());
+        config.lead.model = Some("openai/gpt-5.2".into());
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn resolves_fully_configured_roles() {
         let mut config = Config::default();
-        config.workers.roles.insert(
+        config.agents.roles.insert(
             "research".into(),
             RoleConfig {
                 description: "Investigate options and gather evidence".into(),
-                harness: WorkerHarness::Opencode,
+                harness: AgentHarness::Opencode,
                 model: Some("research-model".into()),
                 reasoning_effort: ReasoningEffort::Low,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
 
-        let generalist = config.workers.role(GENERALIST_ROLE).unwrap();
-        assert_eq!(generalist.1, WorkerHarness::Codex);
+        let generalist = config.agents.role(GENERALIST_ROLE).unwrap();
+        assert_eq!(generalist.1, AgentHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
         assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::GitWorktree);
 
-        let research = config.workers.role("research").unwrap();
+        let research = config.agents.role("research").unwrap();
         assert_eq!(research.0, "Investigate options and gather evidence");
-        assert_eq!(research.1, WorkerHarness::Opencode);
+        assert_eq!(research.1, AgentHarness::Opencode);
         assert_eq!(research.2, Some("research-model"));
         assert_eq!(research.3, ReasoningEffort::Low);
         assert_eq!(research.4, VersionControlMode::SharedCheckout);
         assert!(
             config
-                .workers
+                .agents
                 .role_catalog()
                 .contains("- research [shared-checkout]:")
         );
@@ -514,19 +514,19 @@ mod tests {
 
         let raw = toml::to_string_pretty(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&raw).unwrap(), config);
-        assert!(config.workers.role("missing").is_err());
+        assert!(config.agents.role("missing").is_err());
     }
 
     #[test]
-    fn rejects_worker_config_without_the_default_role() {
+    fn rejects_agent_config_without_the_default_role() {
         let raw = r#"
 schema_version = 1
 enabled = true
 
-[orchestrator]
+[lead]
 harness = "codex"
 
-[workers]
+[agents]
 
 [git]
 auto_integrate = true
@@ -535,17 +535,17 @@ cleanup_on_success = true
 
         let config: Config = toml::from_str(raw).unwrap();
         assert!(!config.yolo);
-        assert_eq!(config.worker_default, GENERALIST_ROLE);
-        assert_eq!(config.orchestrator.max_parallel, None);
+        assert_eq!(config.agent_default, GENERALIST_ROLE);
+        assert_eq!(config.lead.max_parallel, None);
         assert_eq!(config.max_parallel(), 4);
-        assert!(config.workers.roles.is_empty());
+        assert!(config.agents.roles.is_empty());
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn rejects_an_unknown_default_role() {
         let config = Config {
-            worker_default: "missing".into(),
+            agent_default: "missing".into(),
             ..Config::default()
         };
 
@@ -555,11 +555,11 @@ cleanup_on_success = true
     #[test]
     fn rejects_invalid_roles() {
         let mut config = Config::default();
-        config.workers.roles.insert(
+        config.agents.roles.insert(
             " invalid ".into(),
             RoleConfig {
                 description: "Ambiguous fallback".into(),
-                harness: WorkerHarness::Inherit,
+                harness: AgentHarness::Inherit,
                 model: None,
                 reasoning_effort: ReasoningEffort::Default,
                 version_control_mode: VersionControlMode::SharedCheckout,
@@ -567,8 +567,8 @@ cleanup_on_success = true
         );
         assert!(config.validate().is_err());
 
-        config.workers.roles.remove(" invalid ");
-        config.workers.roles.get_mut("qa").unwrap().description = " ".into();
+        config.agents.roles.remove(" invalid ");
+        config.agents.roles.get_mut("qa").unwrap().description = " ".into();
         assert!(config.validate().is_err());
     }
 }

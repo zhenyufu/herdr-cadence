@@ -110,7 +110,7 @@ pub fn changed_paths_for_commit(root: &Path, commit: &str) -> Result<Vec<String>
 
 pub fn cherry_pick(root: &Path, commits: &[String]) -> Result<()> {
     if commits.is_empty() {
-        bail!("Worker produced no commits");
+        bail!("Agent produced no commits");
     }
     let mut command = Command::new("git");
     command.arg("-C").arg(root).arg("cherry-pick").args(commits);
@@ -176,33 +176,33 @@ mod tests {
     }
 
     #[test]
-    fn cherry_picks_worker_commit() {
+    fn cherry_picks_agent_commit() {
         let repo = repository();
-        let worker_dir = tempfile::tempdir().unwrap();
-        let worker_path = worker_dir.path().join("worker");
+        let agent_dir = tempfile::tempdir().unwrap();
+        let agent_path = agent_dir.path().join("agent");
         command(
             repo.path(),
             &[
                 "worktree",
                 "add",
                 "-b",
-                "cadence/test/worker-1",
-                worker_path.to_str().unwrap(),
+                "cadence/test/agent-1",
+                agent_path.to_str().unwrap(),
             ],
         );
         let base = head(repo.path()).unwrap();
-        fs::write(worker_path.join("worker.txt"), "done\n").unwrap();
-        command(&worker_path, &["add", "worker.txt"]);
-        command(&worker_path, &["commit", "-m", "worker"]);
-        let worker_head = head(&worker_path).unwrap();
-        let commits = commits_between(&worker_path, &base, &worker_head).unwrap();
+        fs::write(agent_path.join("agent.txt"), "done\n").unwrap();
+        command(&agent_path, &["add", "agent.txt"]);
+        command(&agent_path, &["commit", "-m", "agent"]);
+        let agent_head = head(&agent_path).unwrap();
+        let commits = commits_between(&agent_path, &base, &agent_head).unwrap();
         assert_eq!(
-            changed_paths(&worker_path, &base, &worker_head).unwrap(),
-            ["worker.txt"]
+            changed_paths(&agent_path, &base, &agent_head).unwrap(),
+            ["agent.txt"]
         );
         cherry_pick(repo.path(), &commits).unwrap();
         assert_eq!(
-            fs::read_to_string(repo.path().join("worker.txt")).unwrap(),
+            fs::read_to_string(repo.path().join("agent.txt")).unwrap(),
             "done\n"
         );
         ensure_clean(repo.path()).unwrap();
@@ -211,34 +211,34 @@ mod tests {
     #[test]
     fn aborts_conflicting_cherry_pick() {
         let repo = repository();
-        let worker_dir = tempfile::tempdir().unwrap();
-        let worker_path = worker_dir.path().join("worker");
+        let agent_dir = tempfile::tempdir().unwrap();
+        let agent_path = agent_dir.path().join("agent");
         command(
             repo.path(),
             &[
                 "worktree",
                 "add",
                 "-b",
-                "cadence/test/worker-2",
-                worker_path.to_str().unwrap(),
+                "cadence/test/agent-2",
+                agent_path.to_str().unwrap(),
             ],
         );
         let base = head(repo.path()).unwrap();
-        fs::write(worker_path.join("file.txt"), "worker\n").unwrap();
-        command(&worker_path, &["add", "file.txt"]);
-        command(&worker_path, &["commit", "-m", "worker conflict"]);
-        let worker_head = head(&worker_path).unwrap();
-        fs::write(repo.path().join("file.txt"), "orchestrator\n").unwrap();
+        fs::write(agent_path.join("file.txt"), "agent\n").unwrap();
+        command(&agent_path, &["add", "file.txt"]);
+        command(&agent_path, &["commit", "-m", "agent conflict"]);
+        let agent_head = head(&agent_path).unwrap();
+        fs::write(repo.path().join("file.txt"), "lead\n").unwrap();
         command(repo.path(), &["add", "file.txt"]);
         command(repo.path(), &["commit", "-m", "base conflict"]);
         let before = head(repo.path()).unwrap();
-        let commits = commits_between(&worker_path, &base, &worker_head).unwrap();
+        let commits = commits_between(&agent_path, &base, &agent_head).unwrap();
         assert!(cherry_pick(repo.path(), &commits).is_err());
         assert_eq!(head(repo.path()).unwrap(), before);
         ensure_clean(repo.path()).unwrap();
         assert_eq!(
             fs::read_to_string(repo.path().join("file.txt")).unwrap(),
-            "orchestrator\n"
+            "lead\n"
         );
     }
 

@@ -93,13 +93,13 @@ impl Herdr {
         Ok(())
     }
 
-    pub fn create_orchestrator_tab(
+    pub fn create_lead_tab(
         &self,
         workspace_id: &str,
         root: &Path,
         env: &[(&str, String)],
     ) -> Result<CreatedTerminal> {
-        let label = orchestrator_label(root);
+        let label = lead_label(root);
         let mut args = vec![
             "tab".to_string(),
             "create".into(),
@@ -120,12 +120,12 @@ impl Herdr {
         Ok(terminal)
     }
 
-    pub fn create_orchestrator_workspace(
+    pub fn create_lead_workspace(
         &self,
         root: &Path,
         env: &[(&str, String)],
     ) -> Result<CreatedTerminal> {
-        let label = orchestrator_label(root);
+        let label = lead_label(root);
         let mut args = vec![
             "workspace".to_string(),
             "create".into(),
@@ -144,7 +144,7 @@ impl Herdr {
         Ok(terminal)
     }
 
-    pub fn create_worker_worktree(
+    pub fn create_agent_worktree(
         &self,
         root: &Path,
         branch: &str,
@@ -168,7 +168,7 @@ impl Herdr {
         parse_created(&self.checked(args)?)
     }
 
-    pub fn create_worker_tab(
+    pub fn create_agent_tab(
         &self,
         workspace_id: &str,
         root: &Path,
@@ -288,7 +288,7 @@ fn launch_model(
     Ok(Some(format!("{model}#{reasoning_effort}")))
 }
 
-fn orchestrator_label(root: &Path) -> String {
+fn lead_label(root: &Path) -> String {
     let project = root
         .file_name()
         .and_then(OsStr::to_str)
@@ -375,9 +375,9 @@ mod tests {
     }
 
     #[test]
-    fn labels_the_orchestrator_as_project_lead() {
+    fn labels_the_lead_as_project_lead() {
         assert_eq!(
-            orchestrator_label(Path::new("/tmp/example-project")),
+            lead_label(Path::new("/tmp/example-project")),
             "[Lead] example-project"
         );
     }

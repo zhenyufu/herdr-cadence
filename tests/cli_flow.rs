@@ -80,19 +80,19 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("reasoning_effort = \"high\""));
     assert!(config.contains("version_control_mode = \"git-worktree\""));
     assert!(config.contains("version_control_mode = \"shared-checkout\""));
-    assert!(config.contains("worker_default = \"generalist\""));
-    assert!(config.contains("[workers.roles.generalist]"));
+    assert!(config.contains("agent_default = \"generalist\""));
+    assert!(config.contains("[agents.roles.generalist]"));
     assert!(config.contains("description = \"Use for general implementation tasks"));
-    assert!(config.contains("[workers.roles.planner]"));
-    assert!(!config.contains("[workers.roles.planning]"));
-    assert!(config.contains("[workers.roles.research]"));
-    assert!(config.contains("[workers.roles.qa]"));
-    assert!(config.find("[git]").unwrap() < config.find("[workers.roles.").unwrap());
+    assert!(config.contains("[agents.roles.planner]"));
+    assert!(!config.contains("[agents.roles.planning]"));
+    assert!(config.contains("[agents.roles.research]"));
+    assert!(config.contains("[agents.roles.qa]"));
+    assert!(config.find("[git]").unwrap() < config.find("[agents.roles.").unwrap());
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
-    assert_eq!(parsed.orchestrator.max_parallel, Some(4));
-    assert_eq!(parsed.orchestrator.model.as_deref(), Some("gpt-5.6-terra"));
-    assert_eq!(parsed.worker_default, "generalist");
-    let generalist = parsed.workers.roles.get("generalist").unwrap();
+    assert_eq!(parsed.lead.max_parallel, Some(4));
+    assert_eq!(parsed.lead.model.as_deref(), Some("gpt-5.6-terra"));
+    assert_eq!(parsed.agent_default, "generalist");
+    let generalist = parsed.agents.roles.get("generalist").unwrap();
     assert_eq!(generalist.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(
         generalist.reasoning_effort,
@@ -168,11 +168,11 @@ fn validates_and_resolves_project_config() {
     let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
     assert_eq!(value["valid"], true);
     assert_eq!(value["enabled"], true);
-    assert_eq!(value["worker_default"], "generalist");
-    assert_eq!(value["orchestrator"]["harness"], "codex");
-    assert_eq!(value["orchestrator"]["model"], "gpt-5.6-terra");
-    assert_eq!(value["orchestrator"]["reasoning_effort"], "high");
-    assert_eq!(value["orchestrator"]["max_parallel"], 4);
+    assert_eq!(value["agent_default"], "generalist");
+    assert_eq!(value["lead"]["harness"], "codex");
+    assert_eq!(value["lead"]["model"], "gpt-5.6-terra");
+    assert_eq!(value["lead"]["reasoning_effort"], "high");
+    assert_eq!(value["lead"]["max_parallel"], 4);
     let roles = value["roles"].as_array().unwrap();
     assert!(roles.iter().any(|role| role["name"] == "generalist"));
     assert!(roles.iter().any(|role| role["name"] == "qa"));
@@ -192,7 +192,7 @@ fn validates_and_resolves_project_config() {
 }
 
 #[test]
-fn rejects_worker_checkout_overrides() {
+fn rejects_agent_checkout_overrides() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -213,7 +213,7 @@ fn rejects_worker_checkout_overrides() {
         repo.path(),
         state.path(),
         &[
-            "worker",
+            "agent",
             "spawn",
             "--request-file",
             request.to_str().unwrap(),
@@ -231,26 +231,26 @@ fn rejects_worker_checkout_overrides() {
 }
 
 #[test]
-fn runs_worker_in_shared_checkout_by_default() {
-    run_worker_flow(false, false, false);
+fn runs_agent_in_shared_checkout_by_default() {
+    run_agent_flow(false, false, false);
 }
 
 #[test]
-fn runs_worker_in_configured_worktree() {
-    run_worker_flow(true, false, false);
+fn runs_agent_in_configured_worktree() {
+    run_agent_flow(true, false, false);
 }
 
 #[test]
 fn runs_every_agent_in_global_yolo() {
-    run_worker_flow(false, true, false);
+    run_agent_flow(false, true, false);
 }
 
 #[test]
-fn starts_dirty_but_blocks_workers_until_clean() {
-    run_worker_flow(true, false, true);
+fn starts_dirty_but_blocks_agents_until_clean() {
+    run_agent_flow(true, false, true);
 }
 
-fn run_worker_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
+fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -263,12 +263,12 @@ fn run_worker_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) 
         .unwrap()
         .replacen(
             "harness = \"codex\"\nmodel = \"gpt-5.6-terra\"",
-            "harness = \"opencode\"\nmodel = \"openai/orchestrator-model\"",
+            "harness = \"opencode\"\nmodel = \"openai/lead-model\"",
             1,
         )
         .replacen(
-            "[workers.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"codex\"\nmodel = \"gpt-5.6-luna\"\nreasoning_effort = \"medium\"",
-            "[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\nreasoning_effort = \"low\"",
+            "[agents.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"codex\"\nmodel = \"gpt-5.6-luna\"\nreasoning_effort = \"medium\"",
+            "[agents.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\nreasoning_effort = \"low\"",
             1,
         );
     if use_worktree {
@@ -294,14 +294,14 @@ fn run_worker_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) 
     let log = fake_dir.path().join("calls.log");
     let busy_once = fake_dir.path().join("busy-once");
     let shell_ready_once = fake_dir.path().join("shell-ready-once");
-    let worker_path = fake_dir.path().join("worker");
-    fs::create_dir(&worker_path).unwrap();
+    let agent_path = fake_dir.path().join("agent");
+    fs::create_dir(&agent_path).unwrap();
     let script = format!(
         r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
 if [ "$1 $2" = "agent get" ]; then
   case "$3" in
-    cadence-*-w*)
+    cadence-*-a*)
       printf '%s\n' '{{"id":"test","result":{{}}}}'
       exit 0
       ;;
@@ -318,7 +318,7 @@ if [ "$1 $2" = "pane process-info" ]; then
   exit 0
 fi
 case "$*" in
-  "agent start cadence-orch-"*)
+  "agent start cadence-lead-"*)
     if [ ! -e '{}' ]; then
       : > '{}'
       printf '%s\n' '{{"error":{{"code":"agent_pane_busy","message":"pane is not ready"}}}}' >&2
@@ -327,15 +327,15 @@ case "$*" in
     ;;
 esac
 if [ "$1 $2" = "workspace create" ]; then
-  printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"orch-ws"}},"tab":{{"tab_id":"tab-orch"}},"root_pane":{{"pane_id":"pane-orch"}}}}}}'
+  printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"lead-ws"}},"tab":{{"tab_id":"tab-lead"}},"root_pane":{{"pane_id":"pane-lead"}}}}}}'
 elif [ "$1 $2" = "tab create" ]; then
   case "$*" in
-    *"[Lead]"*) tab_id="tab-orch"; pane_id="pane-orch" ;;
-    *) tab_id="tab-worker"; pane_id="pane-worker" ;;
+    *"[Lead]"*) tab_id="tab-lead"; pane_id="pane-lead" ;;
+    *) tab_id="tab-agent"; pane_id="pane-agent" ;;
   esac
   printf '%s\n' "{{\"id\":\"test\",\"result\":{{\"tab\":{{\"tab_id\":\"$tab_id\"}},\"root_pane\":{{\"pane_id\":\"$pane_id\"}}}}}}"
 elif [ "$1 $2" = "worktree create" ]; then
-  printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"worker-ws"}},"tab":{{"tab_id":"worker-tab"}},"root_pane":{{"pane_id":"pane-worker"}},"worktree":{{"path":"{}"}}}}}}'
+  printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"agent-ws"}},"tab":{{"tab_id":"agent-tab"}},"root_pane":{{"pane_id":"pane-agent"}},"worktree":{{"path":"{}"}}}}}}'
 elif [ "$1 $2" = "worktree remove" ]; then
   git -C '{}' worktree remove --force '{}'
   printf '%s\n' '{{"id":"test","result":{{}}}}'
@@ -348,9 +348,9 @@ fi
         shell_ready_once.display(),
         busy_once.display(),
         busy_once.display(),
-        worker_path.display(),
+        agent_path.display(),
         repo.path().display(),
-        worker_path.display()
+        agent_path.display()
     );
     fs::write(&fake, script).unwrap();
     let mut permissions = fs::metadata(&fake).unwrap().permissions();
@@ -387,8 +387,8 @@ fi
         .unwrap();
     let active_run = project["active_run"].as_str().unwrap();
     let run = &project["runs"][active_run];
-    assert_eq!(run["base_workspace_id"], "orch-ws");
-    assert_eq!(run["orchestrator"]["workspace_id"], "orch-ws");
+    assert_eq!(run["base_workspace_id"], "lead-ws");
+    assert_eq!(run["lead"]["workspace_id"], "lead-ws");
     if use_worktree {
         let resumed = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
             .args([
@@ -423,7 +423,7 @@ fi
                 state.path().to_str().unwrap(),
                 "--project-root",
                 repo.path().to_str().unwrap(),
-                "worker",
+                "agent",
                 "spawn",
                 "--request-file",
                 request.to_str().unwrap(),
@@ -437,7 +437,7 @@ fi
             error["error"]
                 .as_str()
                 .unwrap()
-                .contains("cannot spawn a Worker")
+                .contains("cannot spawn an agent")
         );
         assert!(
             error["causes"]
@@ -454,7 +454,7 @@ fi
             state.path().to_str().unwrap(),
             "--project-root",
             repo.path().to_str().unwrap(),
-            "worker",
+            "agent",
             "spawn",
             "--request-file",
             request.to_str().unwrap(),
@@ -468,13 +468,13 @@ fi
         String::from_utf8_lossy(&spawn.stderr)
     );
     let value: serde_json::Value = serde_json::from_slice(&spawn.stdout).unwrap();
-    assert_eq!(value["worker_id"], "worker-1");
+    assert_eq!(value["agent_id"], "agent-1");
     assert_eq!(value["display_name"], "[QA] Add API");
     assert_eq!(value["role"], "qa");
     assert_eq!(value["model"], "qa-model");
     assert_eq!(value["reasoning_effort"], "low");
     if use_worktree {
-        assert_eq!(value["workspace_id"], "worker-ws");
+        assert_eq!(value["workspace_id"], "agent-ws");
     } else {
         assert!(value["workspace_id"].is_null());
     }
@@ -486,15 +486,15 @@ fi
         repo.path().file_name().unwrap().to_string_lossy()
     )));
     assert_eq!(calls.matches("workspace create --cwd").count(), 1);
-    assert!(calls.contains("tab rename tab-orch"));
+    assert!(calls.contains("tab rename tab-lead"));
     assert!(calls.contains("[Lead]"));
     assert_eq!(
-        calls.matches("pane process-info --pane pane-orch").count(),
+        calls.matches("pane process-info --pane pane-lead").count(),
         if use_worktree { 3 } else { 2 }
     );
-    assert!(calls.contains("agent start cadence-orch-"));
+    assert!(calls.contains("agent start cadence-lead-"));
     assert_eq!(
-        calls.matches("agent start cadence-orch-").count(),
+        calls.matches("agent start cadence-lead-").count(),
         if use_worktree { 3 } else { 2 }
     );
     assert!(calls.contains("--kind opencode"));
@@ -512,7 +512,7 @@ fi
     assert!(calls.contains("No user task is assigned yet"));
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
     assert!(calls.contains("Handle trivial, low-risk work directly"));
-    assert!(calls.contains("Never directly edit a path reserved by an active Worker"));
+    assert!(calls.contains("Never directly edit a path reserved by an active agent"));
     assert_eq!(
         calls.contains("The base checkout has uncommitted changes"),
         dirty_at_start
@@ -520,19 +520,20 @@ fi
     assert!(calls.contains("Completing a task or batch does not end the Cadence run"));
     assert!(calls.contains("only after the user explicitly asks to end the Cadence session"));
     assert!(calls.contains("use each spawn result's `display_name`"));
-    assert!(calls.contains("do not call agents Worker 2 or worker-2"));
-    let orchestrator_launch = "--kind opencode --pane pane-orch --timeout 120000 -- --model openai/orchestrator-model#high";
-    assert!(calls.contains(orchestrator_launch));
+    assert!(calls.contains("do not call agents Agent 2 or agent-2"));
+    let lead_launch =
+        "--kind opencode --pane pane-lead --timeout 120000 -- --model openai/lead-model#high";
+    assert!(calls.contains(lead_launch));
     if global_yolo {
-        assert!(calls.contains(&format!("{orchestrator_launch} --auto")));
-        assert!(calls.contains("Global YOLO is enabled for you and every Worker"));
+        assert!(calls.contains(&format!("{lead_launch} --auto")));
+        assert!(calls.contains("Global YOLO is enabled for you and every agent"));
     } else {
-        assert!(!calls.contains(&format!("{orchestrator_launch} --auto")));
+        assert!(!calls.contains(&format!("{lead_launch} --auto")));
     }
     assert!(calls.contains("Each role's configured version_control_mode fixes its checkout"));
     if use_worktree {
-        assert!(calls.contains("workspace get orch-ws"));
-        assert!(calls.contains("tab create --workspace orch-ws"));
+        assert!(calls.contains("workspace get lead-ws"));
+        assert!(calls.contains("tab create --workspace lead-ws"));
         assert!(calls.contains(&format!(
             "--label [Lead] {} --focus",
             repo.path().file_name().unwrap().to_string_lossy()
@@ -545,21 +546,21 @@ fi
         assert!(calls.contains("this isolated worktree"));
     } else {
         assert!(!calls.contains("worktree create --cwd"));
-        assert!(calls.contains("tab create --workspace orch-ws"));
+        assert!(calls.contains("tab create --workspace lead-ws"));
         assert!(calls.contains("--label [QA] Add API --no-focus"));
         assert!(calls.contains("directly share the project checkout"));
         assert!(calls.contains("create exactly one commit for changed files"));
     }
     assert!(calls.contains("agent start cadence-"));
-    let worker_launch = "--kind codex --pane pane-worker --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
-    assert!(calls.contains(worker_launch));
+    let agent_launch = "--kind codex --pane pane-agent --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
+    assert!(calls.contains(agent_launch));
     if global_yolo {
         assert!(calls.contains(&format!(
-            "{worker_launch} --dangerously-bypass-approvals-and-sandbox"
+            "{agent_launch} --dangerously-bypass-approvals-and-sandbox"
         )));
     } else if use_worktree {
         assert!(calls.contains(&format!(
-            "{worker_launch} --sandbox workspace-write --ask-for-approval never --add-dir {}",
+            "{agent_launch} --sandbox workspace-write --ask-for-approval never --add-dir {}",
             state.path().display()
         )));
         assert!(calls.contains("If an action outside the available sandbox is required"));
@@ -572,7 +573,7 @@ fi
     assert!(calls.contains("agent prompt"));
 
     let checkout = if use_worktree {
-        fs::remove_dir(&worker_path).unwrap();
+        fs::remove_dir(&agent_path).unwrap();
         let branch = value["branch"].as_str().unwrap();
         git(
             repo.path(),
@@ -581,11 +582,11 @@ fi
                 "add",
                 "-b",
                 branch,
-                worker_path.to_str().unwrap(),
+                agent_path.to_str().unwrap(),
                 "HEAD",
             ],
         );
-        worker_path.clone()
+        agent_path.clone()
     } else {
         assert_eq!(value["branch"], "main");
         repo.path().to_path_buf()
@@ -609,9 +610,9 @@ fi
             state.path().to_str().unwrap(),
             "--project-root",
             repo.path().to_str().unwrap(),
-            "worker",
+            "agent",
             "complete",
-            "worker-1",
+            "agent-1",
             "--report-file",
             report.to_str().unwrap(),
         ])
@@ -641,9 +642,9 @@ fi
                 state.path().to_str().unwrap(),
                 "--project-root",
                 repo.path().to_str().unwrap(),
-                "worker",
+                "agent",
                 "integrate",
-                "worker-1",
+                "agent-1",
             ])
             .env("HERDR_BIN_PATH", &fake)
             .output()
@@ -675,7 +676,7 @@ fi
             state.path().to_str().unwrap(),
             "--project-root",
             repo.path().to_str().unwrap(),
-            "worker",
+            "agent",
             "spawn",
             "--request-file",
             request.to_str().unwrap(),
@@ -689,7 +690,7 @@ fi
         String::from_utf8_lossy(&follow_up.stderr)
     );
     let follow_up: serde_json::Value = serde_json::from_slice(&follow_up.stdout).unwrap();
-    assert_eq!(follow_up["worker_id"], "worker-2");
+    assert_eq!(follow_up["agent_id"], "agent-2");
     assert_eq!(follow_up["branch"], "main");
     assert!(follow_up["workspace_id"].is_null());
 
@@ -704,9 +705,9 @@ fi
             state.path().to_str().unwrap(),
             "--project-root",
             repo.path().to_str().unwrap(),
-            "worker",
+            "agent",
             "complete",
-            "worker-2",
+            "agent-2",
             "--report-file",
             report.to_str().unwrap(),
         ])
@@ -731,9 +732,9 @@ fi
     assert!(calls.contains("agent send-keys cadence-"));
     assert!(calls.contains("ctrl+c"));
     if use_worktree {
-        assert!(calls.contains("worktree remove --workspace worker-ws --force"));
+        assert!(calls.contains("worktree remove --workspace agent-ws --force"));
     } else {
-        assert!(calls.contains("tab close tab-worker"));
+        assert!(calls.contains("tab close tab-agent"));
     }
 }
 

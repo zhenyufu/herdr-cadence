@@ -2,7 +2,7 @@ id = "herdr-cadence"
 name = "Cadence"
 version = "0.2.0"
 min_herdr_version = "0.7.5"
-description = "Orchestrate Codex and OpenCode workers in shared or isolated Git checkouts"
+description = "Orchestrate Codex and OpenCode agents in shared or isolated Git checkouts"
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -27,15 +27,15 @@ command = ["bin/herdr-cadence", "action", "disable-project"]
 
 [[actions]]
 id = "start"
-title = "Cadence: Start Orchestrator"
-description = "Start or focus this project's Orchestrator"
+title = "Cadence: Start Lead"
+description = "Start or focus this project's Lead"
 contexts = ["workspace"]
 command = ["bin/herdr-cadence", "action", "start"]
 
 [[actions]]
 id = "status"
 title = "Cadence: Status"
-description = "Print this project's active run and Worker status"
+description = "Print this project's active run and Agent status"
 contexts = ["workspace"]
 command = ["bin/herdr-cadence", "action", "status"]
 

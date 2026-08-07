@@ -9,8 +9,8 @@ use crate::config::{Config, Harness, VersionControlMode};
 use crate::git;
 use crate::herdr::Herdr;
 use crate::model::{
-    AgentRef, ProjectState, ReportStatus, Run, RunStatus, Worker, WorkerReport, WorkerRequest,
-    WorkerStatus, path_within_scope, scopes_overlap,
+    Agent, AgentRef, AgentReport, AgentRequest, AgentStatus, ProjectState, ReportStatus, Run,
+    RunStatus, path_within_scope, scopes_overlap,
 };
 use crate::prompts;
 use crate::state::{StateStore, project_key};
@@ -85,24 +85,24 @@ impl App {
             }
             let now = unix_ms();
             let id = format!("run-{now}-{}", &key[..8]);
-            let name = format!("cadence-orch-{}", &key[..8]);
+            let name = format!("cadence-lead-{}", &key[..8]);
             let run = Run {
                 id: id.clone(),
                 status: RunStatus::Active,
                 base_branch: branch.clone(),
                 base_workspace_id: workspace_id.to_string(),
-                orchestrator: AgentRef {
+                lead: AgentRef {
                     name,
-                    harness: config.orchestrator.harness,
-                    model: config.orchestrator.model.clone(),
-                    reasoning_effort: config.orchestrator.reasoning_effort,
+                    harness: config.lead.harness,
+                    model: config.lead.model.clone(),
+                    reasoning_effort: config.lead.reasoning_effort,
                     workspace_id: None,
                     tab_id: None,
                     pane_id: None,
                 },
                 created_unix_ms: now,
-                next_worker: 1,
-                workers: Default::default(),
+                next_agent: 1,
+                agents: Default::default(),
                 last_error: None,
             };
             project.active_run = Some(id.clone());
@@ -110,11 +110,9 @@ impl App {
             Ok(run)
         })?;
 
-        if self.herdr.agent_exists(&run.orchestrator.name) {
-            self.herdr.focus_agent(&run.orchestrator.name)?;
-            return Ok(
-                json!({"status": "focused", "run_id": run.id, "agent": run.orchestrator.name}),
-            );
+        if self.herdr.agent_exists(&run.lead.name) {
+            self.herdr.focus_agent(&run.lead.name)?;
+            return Ok(json!({"status": "focused", "run_id": run.id, "agent": run.lead.name}));
         }
 
         let state_dir = self.state.dir().display().to_string();
@@ -125,43 +123,43 @@ impl App {
             ("CADENCE_RUN_ID", run.id.clone()),
         ];
         let existing_workspace = run
-            .orchestrator
+            .lead
             .workspace_id
             .as_deref()
             .filter(|id| self.herdr.workspace_exists(id));
         let terminal = if let Some(workspace_id) = existing_workspace {
             self.herdr
-                .create_orchestrator_tab(workspace_id, &self.root, &env)
-                .context("failed to create the Orchestrator tab")?
+                .create_lead_tab(workspace_id, &self.root, &env)
+                .context("failed to create the Lead tab")?
         } else {
             self.herdr
-                .create_orchestrator_workspace(&self.root, &env)
-                .context("failed to create the Orchestrator workspace")?
+                .create_lead_workspace(&self.root, &env)
+                .context("failed to create the Lead workspace")?
         };
         self.state.update(|store| {
             let stored = active_run_mut(store, &key)?;
             if let Some(workspace_id) = terminal.workspace_id.clone() {
                 stored.base_workspace_id = workspace_id.clone();
-                stored.orchestrator.workspace_id = Some(workspace_id);
+                stored.lead.workspace_id = Some(workspace_id);
             }
-            stored.orchestrator.tab_id = Some(terminal.tab_id.clone());
-            stored.orchestrator.pane_id = Some(terminal.pane_id.clone());
+            stored.lead.tab_id = Some(terminal.tab_id.clone());
+            stored.lead.pane_id = Some(terminal.pane_id.clone());
             Ok(())
         })?;
-        let agent_args = yolo_agent_args(run.orchestrator.harness, config.yolo);
+        let agent_args = yolo_agent_args(run.lead.harness, config.yolo);
         let launch = self.herdr.start_agent(
-            &run.orchestrator.name,
-            run.orchestrator.harness,
+            &run.lead.name,
+            run.lead.harness,
             &terminal.pane_id,
-            run.orchestrator.model.as_deref(),
-            run.orchestrator.reasoning_effort,
+            run.lead.model.as_deref(),
+            run.lead.reasoning_effort,
             &agent_args,
         );
         if let Err(error) = launch {
             self.set_run_error(&key, &run.id, &error.to_string())?;
-            return Err(error.context("failed to start the Orchestrator"));
+            return Err(error.context("failed to start the Lead"));
         }
-        let prompt = prompts::orchestrator(
+        let prompt = prompts::lead(
             &self.binary,
             self.state.dir(),
             &self.root,
@@ -169,13 +167,13 @@ impl App {
             &config,
             checkout_clean,
         );
-        self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
+        self.herdr.prompt_agent(&run.lead.name, &prompt)?;
         self.state.update(|store| {
             active_run_mut(store, &key)?.last_error = None;
             Ok(())
         })?;
         Ok(
-            json!({"status": "started", "run_id": run.id, "agent": run.orchestrator.name, "checkout_clean": checkout_clean, "tab_id": terminal.tab_id, "pane_id": terminal.pane_id}),
+            json!({"status": "started", "run_id": run.id, "agent": run.lead.name, "checkout_clean": checkout_clean, "tab_id": terminal.tab_id, "pane_id": terminal.pane_id}),
         )
     }
 
@@ -201,17 +199,17 @@ impl App {
     pub fn validate_config(&self) -> Result<Value> {
         let config = Config::load(&self.root)?;
         let roles = config
-            .workers
+            .agents
             .roles
             .keys()
             .map(String::as_str)
             .map(|name| {
                 let (description, harness, model, reasoning_effort, version_control_mode) =
-                    config.workers.role(name)?;
+                    config.agents.role(name)?;
                 Ok(json!({
                     "name": name,
                     "description": description,
-                    "harness": harness.resolve(config.orchestrator.harness),
+                    "harness": harness.resolve(config.lead.harness),
                     "model": model,
                     "reasoning_effort": reasoning_effort,
                     "version_control_mode": version_control_mode,
@@ -223,22 +221,22 @@ impl App {
             "config": Config::path(&self.root),
             "enabled": config.enabled,
             "yolo": config.yolo,
-            "worker_default": config.worker_default,
-            "orchestrator": {
-                "harness": config.orchestrator.harness,
-                "model": config.orchestrator.model,
-                "reasoning_effort": config.orchestrator.reasoning_effort,
+            "agent_default": config.agent_default,
+            "lead": {
+                "harness": config.lead.harness,
+                "model": config.lead.model,
+                "reasoning_effort": config.lead.reasoning_effort,
                 "max_parallel": config.max_parallel(),
             },
             "roles": roles,
         }))
     }
 
-    pub fn spawn_worker(&self, request_file: &Path) -> Result<Value> {
+    pub fn spawn_agent(&self, request_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
         git::ensure_clean(&self.root)
-            .context("cannot spawn a Worker until the base checkout is committed or stashed")?;
-        let request: WorkerRequest = serde_json::from_reader(
+            .context("cannot spawn an agent until the base checkout is committed or stashed")?;
+        let request: AgentRequest = serde_json::from_reader(
             fs::File::open(request_file)
                 .with_context(|| format!("cannot open {}", request_file.display()))?,
         )?;
@@ -246,14 +244,14 @@ impl App {
         let role_name = request
             .role
             .as_deref()
-            .unwrap_or(config.worker_default.as_str());
+            .unwrap_or(config.agent_default.as_str());
         let (
             role_description,
             role_harness,
             role_model,
             role_reasoning_effort,
             version_control_mode,
-        ) = config.workers.role(role_name)?;
+        ) = config.agents.role(role_name)?;
         let use_worktree = version_control_mode == VersionControlMode::GitWorktree;
         let role_name = role_name.to_string();
         let role_description = role_description.to_string();
@@ -269,37 +267,37 @@ impl App {
             );
         }
         let base_sha = git::head(&self.root)?;
-        let worker = self.state.update(|store| {
+        let agent = self.state.update(|store| {
             let run = active_run_mut(store, &key)?;
             ensure!(run.status == RunStatus::Active, "Cadence run is not active");
             let active = run
-                .workers
+                .agents
                 .values()
-                .filter(|w| w.status.occupies_slot())
+                .filter(|a| a.status.occupies_slot())
                 .count();
             ensure!(
                 active < max_parallel,
-                "worker limit reached ({})",
+                "agent limit reached ({})",
                 max_parallel
             );
             if let Some(conflict) = run
-                .workers
+                .agents
                 .values()
-                .filter(|w| w.status.occupies_slot())
-                .find(|w| scopes_overlap(&w.scope, &request.scope))
+                .filter(|a| a.status.occupies_slot())
+                .find(|a| scopes_overlap(&a.scope, &request.scope))
             {
                 bail!(
-                    "scope overlaps active Worker {} ({})",
+                    "scope overlaps active agent {} ({})",
                     conflict.id,
                     conflict.title
                 );
             }
-            let number = run.next_worker;
-            run.next_worker += 1;
-            let id = format!("worker-{number}");
+            let number = run.next_agent;
+            run.next_agent += 1;
+            let id = format!("agent-{number}");
             let harness = request
                 .harness
-                .unwrap_or_else(|| role_harness.resolve(config.orchestrator.harness));
+                .unwrap_or_else(|| role_harness.resolve(config.lead.harness));
             let model = request.model.clone().or_else(|| role_model.clone());
             let reasoning_effort = request.reasoning_effort.unwrap_or(role_reasoning_effort);
             let title_slug = slug(&request.title, 20);
@@ -313,7 +311,7 @@ impl App {
             } else {
                 run.base_branch.clone()
             };
-            let worker = Worker {
+            let agent = Agent {
                 id: id.clone(),
                 title: request.title.clone(),
                 task: request.task.clone(),
@@ -328,8 +326,8 @@ impl App {
                 use_worktree,
                 branch,
                 base_sha: base_sha.clone(),
-                agent_name: format!("cadence-{}-w{number}", &key[..6]),
-                status: WorkerStatus::Starting,
+                agent_name: format!("cadence-{}-a{number}", &key[..6]),
+                status: AgentStatus::Starting,
                 workspace_id: None,
                 tab_id: None,
                 pane_id: None,
@@ -338,91 +336,91 @@ impl App {
                 report: None,
                 error: None,
             };
-            run.workers.insert(id, worker.clone());
-            Ok(worker)
+            run.agents.insert(id, agent.clone());
+            Ok(agent)
         })?;
 
         let run = self.active_run_snapshot(&key)?;
         let label = format!(
             "[{}] {}",
-            truncate(&display_role(&worker.role), 20),
-            truncate(&worker.title, 40)
+            truncate(&display_role(&agent.role), 20),
+            truncate(&agent.title, 40)
         );
-        let terminal = match if worker.use_worktree {
+        let terminal = match if agent.use_worktree {
             self.herdr
-                .create_worker_worktree(&self.root, &worker.branch, &worker.base_sha, &label)
+                .create_agent_worktree(&self.root, &agent.branch, &agent.base_sha, &label)
         } else {
             self.herdr
-                .create_worker_tab(&run.base_workspace_id, &self.root, &label)
+                .create_agent_tab(&run.base_workspace_id, &self.root, &label)
         } {
             Ok(terminal) => terminal,
             Err(error) => {
-                self.fail_worker(&key, &worker.id, &error.to_string())?;
-                let resource = if worker.use_worktree {
+                self.fail_agent(&key, &agent.id, &error.to_string())?;
+                let resource = if agent.use_worktree {
                     "worktree"
                 } else {
                     "tab"
                 };
-                return Err(error.context(format!("failed to create Worker {resource}")));
+                return Err(error.context(format!("failed to create agent {resource}")));
             }
         };
         self.state.update(|store| {
-            let stored = worker_mut(active_run_mut(store, &key)?, &worker.id)?;
+            let stored = agent_mut(active_run_mut(store, &key)?, &agent.id)?;
             stored.workspace_id = terminal.workspace_id.clone();
             stored.tab_id = Some(terminal.tab_id.clone());
             stored.pane_id = Some(terminal.pane_id.clone());
             stored.checkout_path = terminal.checkout_path.clone();
             Ok(())
         })?;
-        let agent_args = worker_agent_args(&worker, self.state.dir());
+        let agent_args = agent_launch_args(&agent, self.state.dir());
         if let Err(error) = self.herdr.start_agent(
-            &worker.agent_name,
-            worker.harness,
+            &agent.agent_name,
+            agent.harness,
             &terminal.pane_id,
-            worker.model.as_deref(),
-            worker.reasoning_effort,
+            agent.model.as_deref(),
+            agent.reasoning_effort,
             &agent_args,
         ) {
-            self.fail_worker(&key, &worker.id, &error.to_string())?;
-            return Err(error.context("failed to start Worker agent"));
+            self.fail_agent(&key, &agent.id, &error.to_string())?;
+            return Err(error.context("failed to start agent"));
         }
-        let prompt = prompts::worker(&self.binary, self.state.dir(), &self.root, &run.id, &worker);
-        self.herdr.prompt_agent(&worker.agent_name, &prompt)?;
+        let prompt = prompts::agent(&self.binary, self.state.dir(), &self.root, &run.id, &agent);
+        self.herdr.prompt_agent(&agent.agent_name, &prompt)?;
         self.state.update(|store| {
-            worker_mut(active_run_mut(store, &key)?, &worker.id)?.status = WorkerStatus::Working;
+            agent_mut(active_run_mut(store, &key)?, &agent.id)?.status = AgentStatus::Working;
             Ok(())
         })?;
-        let display_name = worker_display_name(&worker);
+        let display_name = agent_display_name(&agent);
         Ok(
-            json!({"status": "working", "worker_id": worker.id, "display_name": display_name, "role": worker.role, "agent": worker.agent_name, "model": worker.model, "reasoning_effort": worker.reasoning_effort, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
+            json!({"status": "working", "agent_id": agent.id, "display_name": display_name, "role": agent.role, "agent": agent.agent_name, "model": agent.model, "reasoning_effort": agent.reasoning_effort, "branch": agent.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
         )
     }
 
-    pub fn list_workers(&self) -> Result<Value> {
+    pub fn list_agents(&self) -> Result<Value> {
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        Ok(json!({"run_id": run.id, "workers": run.workers.values().collect::<Vec<_>>() }))
+        Ok(json!({"run_id": run.id, "agents": run.agents.values().collect::<Vec<_>>() }))
     }
 
-    pub fn worker_status(&self, worker_id: &str) -> Result<Value> {
+    pub fn agent_status(&self, agent_id: &str) -> Result<Value> {
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        let worker = run.workers.get(worker_id).context("unknown Worker")?;
-        Ok(serde_json::to_value(worker)?)
+        let agent = run.agents.get(agent_id).context("unknown agent")?;
+        Ok(serde_json::to_value(agent)?)
     }
 
-    pub fn worker_report(&self, worker_id: &str) -> Result<Value> {
+    pub fn agent_report(&self, agent_id: &str) -> Result<Value> {
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        let worker = run.workers.get(worker_id).context("unknown Worker")?;
+        let agent = run.agents.get(agent_id).context("unknown agent")?;
         Ok(
-            json!({"worker_id": worker_id, "status": worker.status, "report": worker.report, "error": worker.error}),
+            json!({"agent_id": agent_id, "status": agent.status, "report": agent.report, "error": agent.error}),
         )
     }
 
-    pub fn complete_worker(&self, worker_id: &str, report_file: &Path) -> Result<Value> {
+    pub fn complete_agent(&self, agent_id: &str, report_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
-        let mut report: WorkerReport = serde_json::from_reader(
+        let mut report: AgentReport = serde_json::from_reader(
             fs::File::open(report_file)
                 .with_context(|| format!("cannot open {}", report_file.display()))?,
         )?;
@@ -433,131 +431,121 @@ impl App {
         let key = project_key(&self.root);
         let display_name = {
             let run = self.active_run_snapshot(&key)?;
-            worker_display_name(run.workers.get(worker_id).context("unknown Worker")?)
+            agent_display_name(run.agents.get(agent_id).context("unknown agent")?)
         };
         match report.status {
             ReportStatus::Blocked => {
-                self.store_report(&key, worker_id, report, WorkerStatus::Blocked)?;
+                self.store_report(&key, agent_id, report, AgentStatus::Blocked)?;
                 self.notify(
                     &key,
                     &format!(
-                        "{display_name} is blocked (internal ID: {worker_id}). Inspect its report and follow up."
+                        "{display_name} is blocked (internal ID: {agent_id}). Inspect its report and follow up."
                     ),
                 );
-                self.worker_status(worker_id)
+                self.agent_status(agent_id)
             }
             ReportStatus::Failed => {
-                self.store_report(&key, worker_id, report, WorkerStatus::Failed)?;
+                self.store_report(&key, agent_id, report, AgentStatus::Failed)?;
                 self.notify(
                     &key,
                     &format!(
-                        "{display_name} failed (internal ID: {worker_id}). Its changes were retained."
+                        "{display_name} failed (internal ID: {agent_id}). Its changes were retained."
                     ),
                 );
-                self.worker_status(worker_id)
+                self.agent_status(agent_id)
             }
             ReportStatus::Completed => {
                 let run = self.active_run_snapshot(&key)?;
-                let worker = run.workers.get(worker_id).context("unknown Worker")?;
+                let agent = run.agents.get(agent_id).context("unknown agent")?;
                 let checkout = PathBuf::from(
-                    worker
+                    agent
                         .checkout_path
                         .as_deref()
-                        .context("Worker checkout is unavailable")?,
+                        .context("agent checkout is unavailable")?,
                 );
-                let (worker_head, changed_paths) = if worker.use_worktree {
+                let (agent_head, changed_paths) = if agent.use_worktree {
                     git::ensure_clean(&checkout)?;
-                    let worker_head = git::head(&checkout)?;
+                    let agent_head = git::head(&checkout)?;
                     ensure!(
-                        git::is_ancestor(&checkout, &worker.base_sha, &worker_head)?,
-                        "Worker history no longer descends from its assigned base"
+                        git::is_ancestor(&checkout, &agent.base_sha, &agent_head)?,
+                        "Agent history no longer descends from its assigned base"
                     );
-                    ensure!(worker_head != worker.base_sha, "Worker produced no commits");
+                    ensure!(agent_head != agent.base_sha, "Agent produced no commits");
                     if let Some(reported) = report.commit_sha.as_deref() {
                         ensure!(
-                            reported == worker_head,
-                            "reported commit_sha is not Worker HEAD"
+                            reported == agent_head,
+                            "reported commit_sha is not Agent HEAD"
                         );
                     }
                     let changed_paths =
-                        git::changed_paths(&checkout, &worker.base_sha, &worker_head)?;
-                    (Some(worker_head), changed_paths)
+                        git::changed_paths(&checkout, &agent.base_sha, &agent_head)?;
+                    (Some(agent_head), changed_paths)
                 } else if let Some(reported_commit) = report.commit_sha.as_deref() {
-                    let worker_commit = git::resolve_commit(&checkout, reported_commit)?;
+                    let agent_commit = git::resolve_commit(&checkout, reported_commit)?;
+                    ensure!(agent_commit != agent.base_sha, "Agent produced no commits");
                     ensure!(
-                        worker_commit != worker.base_sha,
-                        "Worker produced no commits"
-                    );
-                    ensure!(
-                        git::is_ancestor(&checkout, &worker.base_sha, &worker_commit)?,
-                        "Worker commit does not descend from its assigned base"
+                        git::is_ancestor(&checkout, &agent.base_sha, &agent_commit)?,
+                        "Agent commit does not descend from its assigned base"
                     );
                     let current_head = git::head(&checkout)?;
                     ensure!(
-                        git::is_ancestor(&checkout, &worker_commit, &current_head)?,
-                        "Worker commit is not on the current base branch"
+                        git::is_ancestor(&checkout, &agent_commit, &current_head)?,
+                        "Agent commit is not on the current base branch"
                     );
-                    let changed_paths = git::changed_paths_for_commit(&checkout, &worker_commit)?;
-                    (Some(worker_commit), changed_paths)
+                    let changed_paths = git::changed_paths_for_commit(&checkout, &agent_commit)?;
+                    (Some(agent_commit), changed_paths)
                 } else {
                     ensure!(
                         report.changed_paths.is_empty(),
-                        "shared-checkout Workers must report commit_sha when files changed"
+                        "shared-checkout agents must report commit_sha when files changed"
                     );
                     (None, Vec::new())
                 };
                 ensure!(
-                    worker_head.is_none() || !changed_paths.is_empty(),
-                    "Worker commits changed no paths"
+                    agent_head.is_none() || !changed_paths.is_empty(),
+                    "Agent commits changed no paths"
                 );
                 let outside_scope = changed_paths
                     .iter()
-                    .filter(|path| !path_within_scope(path, &worker.scope))
+                    .filter(|path| !path_within_scope(path, &agent.scope))
                     .cloned()
                     .collect::<Vec<_>>();
                 ensure!(
                     outside_scope.is_empty(),
-                    "Worker changed paths outside its reserved scope: {}",
+                    "Agent changed paths outside its reserved scope: {}",
                     outside_scope.join(", ")
                 );
-                report.commit_sha = worker_head;
+                report.commit_sha = agent_head;
                 report.changed_paths = changed_paths;
-                self.store_report(&key, worker_id, report, WorkerStatus::Completed)?;
-                if worker.use_worktree {
+                self.store_report(&key, agent_id, report, AgentStatus::Completed)?;
+                if agent.use_worktree {
                     self.notify(
                         &key,
                         &format!(
-                            "{display_name} completed (internal ID: {worker_id}). Review its report, then run `worker integrate {worker_id}` to accept the isolated commit."
+                            "{display_name} completed (internal ID: {agent_id}). Review its report, then run `agent integrate {agent_id}` to accept the isolated commit."
                         ),
                     );
-                    self.worker_status(worker_id)
+                    self.agent_status(agent_id)
                 } else if config.git.auto_integrate {
-                    self.integrate_worker(worker_id)
+                    self.integrate_agent(agent_id)
                 } else {
-                    self.worker_status(worker_id)
+                    self.agent_status(agent_id)
                 }
             }
         }
     }
 
-    pub fn integrate_worker(&self, worker_id: &str) -> Result<Value> {
+    pub fn integrate_agent(&self, agent_id: &str) -> Result<Value> {
         let config = self.enabled_config()?;
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        let worker = run
-            .workers
-            .get(worker_id)
-            .context("unknown Worker")?
-            .clone();
+        let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
         ensure!(
-            matches!(
-                worker.status,
-                WorkerStatus::Completed | WorkerStatus::Conflict
-            ),
-            "Worker must have a completed report before integration"
+            matches!(agent.status, AgentStatus::Completed | AgentStatus::Conflict),
+            "Agent must have a completed report before integration"
         );
         self.state.update(|store| {
-            worker_mut(active_run_mut(store, &key)?, worker_id)?.status = WorkerStatus::Integrating;
+            agent_mut(active_run_mut(store, &key)?, agent_id)?.status = AgentStatus::Integrating;
             Ok(())
         })?;
         let result = (|| -> Result<()> {
@@ -567,8 +555,8 @@ impl App {
                 "base checkout changed branches; expected {}",
                 run.base_branch
             );
-            if !worker.use_worktree {
-                if let Some(commit) = worker
+            if !agent.use_worktree {
+                if let Some(commit) = agent
                     .report
                     .as_ref()
                     .and_then(|report| report.commit_sha.as_deref())
@@ -576,129 +564,129 @@ impl App {
                     let current_head = git::head(&self.root)?;
                     ensure!(
                         git::is_ancestor(&self.root, commit, &current_head)?,
-                        "Worker commit is not on the current base branch"
+                        "Agent commit is not on the current base branch"
                     );
                 }
                 return Ok(());
             }
             git::ensure_clean(&self.root)?;
             let checkout = PathBuf::from(
-                worker
+                agent
                     .checkout_path
                     .as_deref()
-                    .context("Worker checkout is unavailable")?,
+                    .context("agent checkout is unavailable")?,
             );
-            let worker_head = git::head(&checkout)?;
-            let commits = git::commits_between(&checkout, &worker.base_sha, &worker_head)?;
+            let agent_head = git::head(&checkout)?;
+            let commits = git::commits_between(&checkout, &agent.base_sha, &agent_head)?;
             git::cherry_pick(&self.root, &commits)
         })();
         match result {
             Ok(()) => {
                 self.state.update(|store| {
-                    let stored = worker_mut(active_run_mut(store, &key)?, worker_id)?;
-                    stored.status = WorkerStatus::Integrated;
+                    let stored = agent_mut(active_run_mut(store, &key)?, agent_id)?;
+                    stored.status = AgentStatus::Integrated;
                     stored.error = None;
                     Ok(())
                 })?;
-                let message = if worker.use_worktree {
+                let message = if agent.use_worktree {
                     if config.git.cleanup_on_success {
                         format!(
-                            "{} integrated successfully (internal ID: {worker_id}); its agent and worktree were cleaned up.",
-                            worker_display_name(&worker)
+                            "{} integrated successfully (internal ID: {agent_id}); its agent and worktree were cleaned up.",
+                            agent_display_name(&agent)
                         )
                     } else {
                         format!(
-                            "{} integrated successfully (internal ID: {worker_id}); its agent and worktree were retained by configuration.",
-                            worker_display_name(&worker)
+                            "{} integrated successfully (internal ID: {agent_id}); its agent and worktree were retained by configuration.",
+                            agent_display_name(&agent)
                         )
                     }
                 } else if config.git.cleanup_on_success {
                     format!(
-                        "{} completed successfully on the shared base branch (internal ID: {worker_id}); its agent and tab were cleaned up.",
-                        worker_display_name(&worker)
+                        "{} completed successfully on the shared base branch (internal ID: {agent_id}); its agent and tab were cleaned up.",
+                        agent_display_name(&agent)
                     )
                 } else {
                     format!(
-                        "{} completed successfully on the shared base branch (internal ID: {worker_id}); its agent and tab were retained by configuration.",
-                        worker_display_name(&worker)
+                        "{} completed successfully on the shared base branch (internal ID: {agent_id}); its agent and tab were retained by configuration.",
+                        agent_display_name(&agent)
                     )
                 };
                 if config.git.cleanup_on_success {
-                    if self.herdr.agent_exists(&worker.agent_name) {
-                        let _ = self.herdr.send_ctrl_c(&worker.agent_name);
+                    if self.herdr.agent_exists(&agent.agent_name) {
+                        let _ = self.herdr.send_ctrl_c(&agent.agent_name);
                     }
-                    self.cleanup_worker(&key, worker_id)?;
+                    self.cleanup_agent(&key, agent_id)?;
                 }
                 self.notify(&key, &message);
-                self.worker_status(worker_id)
+                self.agent_status(agent_id)
             }
             Err(error) => {
                 self.state.update(|store| {
-                    let stored = worker_mut(active_run_mut(store, &key)?, worker_id)?;
-                    stored.status = WorkerStatus::Conflict;
+                    let stored = agent_mut(active_run_mut(store, &key)?, agent_id)?;
+                    stored.status = AgentStatus::Conflict;
                     stored.error = Some(error.to_string());
                     Ok(())
                 })?;
-                self.notify(&key, &format!("{} could not integrate (internal ID: {worker_id}). Its changes and isolated resources were retained.", worker_display_name(&worker)));
-                self.worker_status(worker_id)
+                self.notify(&key, &format!("{} could not integrate (internal ID: {agent_id}). Its changes and isolated resources were retained.", agent_display_name(&agent)));
+                self.agent_status(agent_id)
             }
         }
     }
 
-    pub fn prompt_worker(&self, worker_id: &str, prompt_file: &Path) -> Result<Value> {
+    pub fn prompt_agent(&self, agent_id: &str, prompt_file: &Path) -> Result<Value> {
         let prompt = fs::read_to_string(prompt_file)?;
         ensure!(!prompt.trim().is_empty(), "prompt cannot be empty");
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        let worker = run.workers.get(worker_id).context("unknown Worker")?;
+        let agent = run.agents.get(agent_id).context("unknown agent")?;
         ensure!(
-            self.herdr.agent_exists(&worker.agent_name),
-            "Worker agent is not running"
+            self.herdr.agent_exists(&agent.agent_name),
+            "agent is not running"
         );
-        self.herdr.prompt_agent(&worker.agent_name, &prompt)?;
+        self.herdr.prompt_agent(&agent.agent_name, &prompt)?;
         self.state.update(|store| {
-            let worker = worker_mut(active_run_mut(store, &key)?, worker_id)?;
-            worker.status = WorkerStatus::Working;
-            worker.error = None;
+            let agent = agent_mut(active_run_mut(store, &key)?, agent_id)?;
+            agent.status = AgentStatus::Working;
+            agent.error = None;
             Ok(())
         })?;
-        self.worker_status(worker_id)
+        self.agent_status(agent_id)
     }
 
-    pub fn cancel_worker(&self, worker_id: &str) -> Result<Value> {
+    pub fn cancel_agent(&self, agent_id: &str) -> Result<Value> {
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        let worker = run.workers.get(worker_id).context("unknown Worker")?;
-        if self.herdr.agent_exists(&worker.agent_name) {
-            self.herdr.send_ctrl_c(&worker.agent_name)?;
+        let agent = run.agents.get(agent_id).context("unknown agent")?;
+        if self.herdr.agent_exists(&agent.agent_name) {
+            self.herdr.send_ctrl_c(&agent.agent_name)?;
         }
         self.state.update(|store| {
-            worker_mut(active_run_mut(store, &key)?, worker_id)?.status = WorkerStatus::Cancelled;
+            agent_mut(active_run_mut(store, &key)?, agent_id)?.status = AgentStatus::Cancelled;
             Ok(())
         })?;
-        self.worker_status(worker_id)
+        self.agent_status(agent_id)
     }
 
     pub fn finish_run(&self) -> Result<Value> {
         let config = self.enabled_config()?;
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
-        if let Some(worker) = run.workers.values().find(|w| !w.status.is_terminal()) {
+        if let Some(agent) = run.agents.values().find(|a| !a.status.is_terminal()) {
             bail!(
-                "Worker {} is not in a terminal state ({:?})",
-                worker.id,
-                worker.status
+                "Agent {} is not in a terminal state ({:?})",
+                agent.id,
+                agent.status
             );
         }
         if config.git.cleanup_on_success
-            && let Some(worker) = run.workers.values().find(|w| {
-                w.status == WorkerStatus::Integrated
-                    && (w.workspace_id.is_some() || w.tab_id.is_some())
+            && let Some(agent) = run.agents.values().find(|a| {
+                a.status == AgentStatus::Integrated
+                    && (a.workspace_id.is_some() || a.tab_id.is_some())
             })
         {
             bail!(
-                "Worker {} is integrated but its resources have not been cleaned up",
-                worker.id
+                "Agent {} is integrated but its resources have not been cleaned up",
+                agent.id
             );
         }
         self.state.update(|store| {
@@ -718,7 +706,7 @@ impl App {
             .get("pane_id")
             .and_then(Value::as_str)
             .context("event omitted pane_id")?;
-        let Some((key, run_id, worker_id, worker)) = self.find_worker_by_pane(pane_id)? else {
+        let Some((key, run_id, agent_id, agent)) = self.find_agent_by_pane(pane_id)? else {
             return Ok(json!({"ignored": true, "reason": "pane is not owned by Cadence"}));
         };
         let project_root = PathBuf::from(self.project_root_for_key(&key)?);
@@ -732,9 +720,9 @@ impl App {
                     .get("agent_status")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let previous = worker.observed_agent_status.as_deref();
+                let previous = agent.observed_agent_status.as_deref();
                 self.state.update(|store| {
-                    worker_mut(run_mut(store, &key, &run_id)?, &worker_id)?.observed_agent_status =
+                    agent_mut(run_mut(store, &key, &run_id)?, &agent_id)?.observed_agent_status =
                         Some(status.to_string());
                     Ok(())
                 })?;
@@ -742,19 +730,19 @@ impl App {
                     self.notify(
                         &key,
                         &format!(
-                            "{} is waiting for input (internal ID: {worker_id}).",
-                            worker_display_name(&worker)
+                            "{} is waiting for input (internal ID: {agent_id}).",
+                            agent_display_name(&agent)
                         ),
                     );
                 } else if matches!(status, "idle" | "done")
-                    && worker.status == WorkerStatus::Working
+                    && agent.status == AgentStatus::Working
                     && !matches!(previous, Some("idle" | "done"))
                 {
                     self.notify(
                         &key,
                         &format!(
-                            "{} is idle but has not submitted a completion report (internal ID: {worker_id}).",
-                            worker_display_name(&worker)
+                            "{} is idle but has not submitted a completion report (internal ID: {agent_id}).",
+                            agent_display_name(&agent)
                         ),
                     );
                 }
@@ -766,13 +754,13 @@ impl App {
                     .unwrap_or(false);
                 let agent_missing = data.get("agent").is_none_or(Value::is_null);
                 if released || agent_missing {
-                    self.handle_worker_exit(&key, &run_id, &worker_id, &worker)?;
+                    self.handle_agent_exit(&key, &run_id, &agent_id, &agent)?;
                 }
             }
-            "pane.exited" => self.handle_worker_exit(&key, &run_id, &worker_id, &worker)?,
+            "pane.exited" => self.handle_agent_exit(&key, &run_id, &agent_id, &agent)?,
             _ => {}
         }
-        Ok(json!({"handled": true, "worker_id": worker_id, "event": event_name}))
+        Ok(json!({"handled": true, "agent_id": agent_id, "event": event_name}))
     }
 
     pub fn startup(&self) -> Result<Value> {
@@ -789,17 +777,17 @@ impl App {
             let Some(run) = project.runs.get(&run_id) else {
                 continue;
             };
-            for worker in run.workers.values() {
-                if !self.herdr.agent_exists(&worker.agent_name) {
-                    self.handle_worker_exit(&key, &run_id, &worker.id, worker)?;
+            for agent in run.agents.values() {
+                if !self.herdr.agent_exists(&agent.agent_name) {
+                    self.handle_agent_exit(&key, &run_id, &agent.id, agent)?;
                     reconciled += 1;
                 }
             }
-            if !self.herdr.agent_exists(&run.orchestrator.name) {
+            if !self.herdr.agent_exists(&run.lead.name) {
                 self.set_run_error(
                     &key,
                     &run_id,
-                    "Orchestrator is not running; invoke Cadence start to resume",
+                    "Lead is not running; invoke Cadence start to resume",
                 )?;
             }
         }
@@ -832,23 +820,23 @@ impl App {
     fn store_report(
         &self,
         key: &str,
-        worker_id: &str,
-        report: WorkerReport,
-        status: WorkerStatus,
+        agent_id: &str,
+        report: AgentReport,
+        status: AgentStatus,
     ) -> Result<()> {
         self.state.update(|store| {
-            let worker = worker_mut(active_run_mut(store, key)?, worker_id)?;
-            worker.report = Some(report);
-            worker.status = status;
+            let agent = agent_mut(active_run_mut(store, key)?, agent_id)?;
+            agent.report = Some(report);
+            agent.status = status;
             Ok(())
         })
     }
 
-    fn fail_worker(&self, key: &str, worker_id: &str, message: &str) -> Result<()> {
+    fn fail_agent(&self, key: &str, agent_id: &str, message: &str) -> Result<()> {
         self.state.update(|store| {
-            let worker = worker_mut(active_run_mut(store, key)?, worker_id)?;
-            worker.status = WorkerStatus::Failed;
-            worker.error = Some(message.to_string());
+            let agent = agent_mut(active_run_mut(store, key)?, agent_id)?;
+            agent.status = AgentStatus::Failed;
+            agent.error = Some(message.to_string());
             Ok(())
         })
     }
@@ -862,17 +850,13 @@ impl App {
 
     fn notify(&self, key: &str, message: &str) {
         if let Ok(run) = self.active_run_snapshot(key) {
-            let _ = self.herdr.prompt_agent(
-                &run.orchestrator.name,
-                &format!("Cadence update: {message}"),
-            );
+            let _ = self
+                .herdr
+                .prompt_agent(&run.lead.name, &format!("Cadence update: {message}"));
         }
     }
 
-    fn find_worker_by_pane(
-        &self,
-        pane_id: &str,
-    ) -> Result<Option<(String, String, String, Worker)>> {
+    fn find_agent_by_pane(&self, pane_id: &str) -> Result<Option<(String, String, String, Agent)>> {
         let store = self.state.read()?;
         for (key, project) in store.projects {
             let Some(run_id) = project.active_run else {
@@ -881,12 +865,12 @@ impl App {
             let Some(run) = project.runs.get(&run_id) else {
                 continue;
             };
-            if let Some(worker) = run
-                .workers
+            if let Some(agent) = run
+                .agents
                 .values()
-                .find(|w| w.pane_id.as_deref() == Some(pane_id))
+                .find(|a| a.pane_id.as_deref() == Some(pane_id))
             {
-                return Ok(Some((key, run_id, worker.id.clone(), worker.clone())));
+                return Ok(Some((key, run_id, agent.id.clone(), agent.clone())));
             }
         }
         Ok(None)
@@ -901,61 +885,57 @@ impl App {
             .context("unknown project")
     }
 
-    fn handle_worker_exit(
+    fn handle_agent_exit(
         &self,
         key: &str,
         run_id: &str,
-        worker_id: &str,
-        worker: &Worker,
+        agent_id: &str,
+        agent: &Agent,
     ) -> Result<()> {
-        if worker.status == WorkerStatus::Integrated {
+        if agent.status == AgentStatus::Integrated {
             let root = PathBuf::from(self.project_root_for_key(key)?);
             if Config::load(&root).is_ok_and(|config| config.git.cleanup_on_success) {
-                self.cleanup_worker(key, worker_id)?;
+                self.cleanup_agent(key, agent_id)?;
             }
-        } else if !worker.status.is_terminal() {
+        } else if !agent.status.is_terminal() {
             self.state.update(|store| {
-                let stored = worker_mut(run_mut(store, key, run_id)?, worker_id)?;
-                stored.status = WorkerStatus::Failed;
+                let stored = agent_mut(run_mut(store, key, run_id)?, agent_id)?;
+                stored.status = AgentStatus::Failed;
                 stored.error = Some("agent exited without a terminal completion report".into());
                 Ok(())
             })?;
             self.notify(
                 key,
                 &format!(
-                    "{} exited without completing (internal ID: {worker_id}); its changes and isolated resources were retained.",
-                    worker_display_name(worker)
+                    "{} exited without completing (internal ID: {agent_id}); its changes and isolated resources were retained.",
+                    agent_display_name(agent)
                 ),
             );
         }
         Ok(())
     }
 
-    fn cleanup_worker(&self, key: &str, worker_id: &str) -> Result<()> {
+    fn cleanup_agent(&self, key: &str, agent_id: &str) -> Result<()> {
         let run = self.active_run_snapshot(key)?;
-        let worker = run
-            .workers
-            .get(worker_id)
-            .context("unknown Worker")?
-            .clone();
-        if worker.use_worktree {
-            if let Some(workspace_id) = worker.workspace_id.as_deref() {
+        let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
+        if agent.use_worktree {
+            if let Some(workspace_id) = agent.workspace_id.as_deref() {
                 self.herdr.remove_worktree(workspace_id)?;
             }
-        } else if let Some(tab_id) = worker.tab_id.as_deref() {
+        } else if let Some(tab_id) = agent.tab_id.as_deref() {
             let _ = self.herdr.close_tab(tab_id);
         }
         self.state.update(|store| {
-            let stored = worker_mut(active_run_mut(store, key)?, worker_id)?;
+            let stored = agent_mut(active_run_mut(store, key)?, agent_id)?;
             stored.workspace_id = None;
             stored.tab_id = None;
             stored.pane_id = None;
             stored.checkout_path = None;
             Ok(())
         })?;
-        if worker.use_worktree {
+        if agent.use_worktree {
             let root = PathBuf::from(self.project_root_for_key(key)?);
-            git::delete_branch(&root, &worker.branch)?;
+            git::delete_branch(&root, &agent.branch)?;
         }
         Ok(())
     }
@@ -1017,8 +997,8 @@ fn run_mut<'a>(store: &'a mut crate::model::Store, key: &str, run_id: &str) -> R
         .context("unknown Cadence run")
 }
 
-fn worker_mut<'a>(run: &'a mut Run, worker_id: &str) -> Result<&'a mut Worker> {
-    run.workers.get_mut(worker_id).context("unknown Worker")
+fn agent_mut<'a>(run: &'a mut Run, agent_id: &str) -> Result<&'a mut Agent> {
+    run.agents.get_mut(agent_id).context("unknown agent")
 }
 
 fn unix_ms() -> u128 {
@@ -1059,14 +1039,14 @@ fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
 
-fn worker_agent_args(worker: &Worker, state_dir: &Path) -> Vec<String> {
-    if worker.yolo {
-        return yolo_agent_args(worker.harness, true);
+fn agent_launch_args(agent: &Agent, state_dir: &Path) -> Vec<String> {
+    if agent.yolo {
+        return yolo_agent_args(agent.harness, true);
     }
-    if !worker.use_worktree {
+    if !agent.use_worktree {
         return Vec::new();
     }
-    match worker.harness {
+    match agent.harness {
         Harness::Codex => vec![
             "--sandbox".into(),
             "workspace-write".into(),
@@ -1109,8 +1089,8 @@ fn display_role(role: &str) -> String {
         .join(" ")
 }
 
-fn worker_display_name(worker: &Worker) -> String {
-    format!("[{}] {}", display_role(&worker.role), worker.title)
+fn agent_display_name(agent: &Agent) -> String {
+    format!("[{}] {}", display_role(&agent.role), agent.title)
 }
 
 #[cfg(test)]
@@ -1118,7 +1098,7 @@ mod tests {
     use super::display_role;
 
     #[test]
-    fn formats_worker_roles_for_labels() {
+    fn formats_agent_roles_for_labels() {
         assert_eq!(display_role("research"), "Researcher");
         assert_eq!(display_role("qa"), "QA");
         assert_eq!(display_role("docs_writer"), "Docs Writer");
