@@ -49,7 +49,7 @@ use_git_worktrees = false
 [orchestrator]
 harness = "codex" # or "opencode"
 model = "gpt-5.6-sol" # optional; omit to use the harness default
-reasoning_effort = "high" # default / low / medium / high
+reasoning_effort = "high" # default / low / medium / high / xhigh
 max_parallel = 4
 
 [git]
@@ -78,7 +78,7 @@ harness = "inherit"
 
 The top-level `[workers]` harness, model, and reasoning effort define the `generalist` fallback. The Orchestrator chooses a named role from its description and uses `generalist` when none is a good match. Named roles inherit the Worker reasoning effort unless they override it. A Worker request can override its role's harness, model, or reasoning effort, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
 
-Reasoning effort is a portable intent with `default`, `low`, `medium`, and `high` values. Cadence maps it to Codex's `model_reasoning_effort` and to an OpenCode model variant. OpenCode reasoning requires an explicit `provider/model`; for example, `model = "openai/gpt-5.2"` with `reasoning_effort = "high"` launches `openai/gpt-5.2#high`. Variant availability remains model-specific. When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model.
+Reasoning effort accepts `default`, `low`, `medium`, `high`, and `xhigh`. Cadence maps it to Codex's `model_reasoning_effort` and to an OpenCode model variant. OpenCode reasoning requires an explicit `provider/model`; for example, `model = "openai/gpt-5.2"` with `reasoning_effort = "high"` launches `openai/gpt-5.2#high`. Variant availability remains model-specific, including `xhigh`. When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model.
 
 For compatibility, Cadence still accepts `max_parallel` under `[workers]` in existing schema-version-1 configs, but it cannot be set in both sections. Workers use the shared project checkout by default; set top-level `use_git_worktrees = true` for isolated branches and checkouts.
 

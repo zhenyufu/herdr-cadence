@@ -380,11 +380,11 @@ mod tests {
             launch_model(
                 Harness::Opencode,
                 Some("openai/gpt-5.2#low"),
-                ReasoningEffort::High,
+                ReasoningEffort::Xhigh,
             )
             .unwrap()
             .as_deref(),
-            Some("openai/gpt-5.2#high")
+            Some("openai/gpt-5.2#xhigh")
         );
         assert!(launch_model(Harness::Opencode, None, ReasoningEffort::High).is_err());
     }

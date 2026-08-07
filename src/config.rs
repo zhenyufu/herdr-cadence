@@ -86,6 +86,7 @@ pub enum ReasoningEffort {
     Low,
     Medium,
     High,
+    Xhigh,
 }
 
 impl ReasoningEffort {
@@ -95,6 +96,7 @@ impl ReasoningEffort {
             Self::Low => Some("low"),
             Self::Medium => Some("medium"),
             Self::High => Some("high"),
+            Self::Xhigh => Some("xhigh"),
         }
     }
 }
@@ -411,6 +413,18 @@ mod tests {
         let parsed: Config = toml::from_str(&raw).unwrap();
 
         assert_eq!(parsed, config);
+        assert!(parsed.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_extra_high_reasoning() {
+        let mut config = Config::default();
+        config.orchestrator.reasoning_effort = ReasoningEffort::Xhigh;
+
+        let raw = toml::to_string_pretty(&config).unwrap();
+        let parsed: Config = toml::from_str(&raw).unwrap();
+
+        assert_eq!(parsed.orchestrator.reasoning_effort, ReasoningEffort::Xhigh);
         assert!(parsed.validate().is_ok());
     }
 
