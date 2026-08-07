@@ -263,7 +263,7 @@ fn orchestrator_label(root: &Path) -> String {
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or("project");
-    format!("{project} (Cadence)")
+    format!("[Cadence]{project}")
 }
 
 fn command_error(output: &Output) -> anyhow::Error {

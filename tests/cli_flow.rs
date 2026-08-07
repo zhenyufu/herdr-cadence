@@ -196,7 +196,7 @@ if [ "$1 $2" = "workspace create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"orch-ws"}},"tab":{{"tab_id":"tab-orch"}},"root_pane":{{"pane_id":"pane-orch"}}}}}}'
 elif [ "$1 $2" = "tab create" ]; then
   case "$*" in
-    *"(Cadence)"*) tab_id="tab-orch"; pane_id="pane-orch" ;;
+    *"[Cadence]"*) tab_id="tab-orch"; pane_id="pane-orch" ;;
     *) tab_id="tab-worker"; pane_id="pane-worker" ;;
   esac
   printf '%s\n' "{{\"id\":\"test\",\"result\":{{\"tab\":{{\"tab_id\":\"$tab_id\"}},\"root_pane\":{{\"pane_id\":\"$pane_id\"}}}}}}"
@@ -311,13 +311,13 @@ fi
 
     let calls = fs::read_to_string(&log).unwrap();
     assert!(calls.contains(&format!(
-        "workspace create --cwd {} --label {} (Cadence)",
+        "workspace create --cwd {} --label [Cadence]{}",
         repo.path().canonicalize().unwrap().display(),
         repo.path().file_name().unwrap().to_string_lossy()
     )));
     assert_eq!(calls.matches("workspace create --cwd").count(), 1);
     assert!(calls.contains("tab rename tab-orch"));
-    assert!(calls.contains("(Cadence)"));
+    assert!(calls.contains("[Cadence]"));
     assert_eq!(
         calls.matches("pane process-info --pane pane-orch").count(),
         if use_worktrees { 3 } else { 2 }
@@ -346,7 +346,10 @@ fi
     if use_worktrees {
         assert!(calls.contains("workspace get orch-ws"));
         assert!(calls.contains("tab create --workspace orch-ws"));
-        assert!(calls.contains("(Cadence) --focus"));
+        assert!(calls.contains(&format!(
+            "--label [Cadence]{} --focus",
+            repo.path().file_name().unwrap().to_string_lossy()
+        )));
         assert!(calls.contains(&format!(
             "worktree create --cwd {}",
             repo.path().canonicalize().unwrap().display()
