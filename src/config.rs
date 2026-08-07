@@ -15,8 +15,6 @@ pub struct Config {
     pub enabled: bool,
     #[serde(default)]
     pub yolo: bool,
-    #[serde(default)]
-    pub use_git_worktrees: bool,
     pub orchestrator: AgentConfig,
     pub git: GitConfig,
     pub workers: WorkerConfig,
@@ -42,6 +40,8 @@ pub struct WorkerConfig {
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: ReasoningEffort,
+    #[serde(default)]
+    pub version_control_mode: VersionControlMode,
     #[serde(default = "default_generalist_description")]
     pub generalist_description: String,
     // Accepted for schema v1 compatibility; new configs place this under orchestrator.
@@ -60,6 +60,8 @@ pub struct RoleConfig {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub version_control_mode: VersionControlMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -85,6 +87,14 @@ pub enum ReasoningEffort {
     Medium,
     High,
     Xhigh,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum VersionControlMode {
+    #[default]
+    SharedCheckout,
+    GitWorktree,
 }
 
 impl ReasoningEffort {
@@ -132,7 +142,6 @@ impl Default for Config {
             schema_version: 1,
             enabled: true,
             yolo: false,
-            use_git_worktrees: false,
             orchestrator: AgentConfig {
                 harness: Harness::Codex,
                 model: Some("gpt-5.6-sol".into()),
@@ -147,6 +156,7 @@ impl Default for Config {
                 harness: WorkerHarness::Inherit,
                 model: None,
                 reasoning_effort: ReasoningEffort::Default,
+                version_control_mode: VersionControlMode::GitWorktree,
                 generalist_description: default_generalist_description(),
                 max_parallel: None,
                 roles: default_roles(),
@@ -254,7 +264,13 @@ impl WorkerConfig {
     pub fn role(
         &self,
         name: Option<&str>,
-    ) -> Result<(&str, WorkerHarness, Option<&str>, ReasoningEffort)> {
+    ) -> Result<(
+        &str,
+        WorkerHarness,
+        Option<&str>,
+        ReasoningEffort,
+        VersionControlMode,
+    )> {
         let name = name.unwrap_or(GENERALIST_ROLE);
         if name == GENERALIST_ROLE {
             return Ok((
@@ -262,6 +278,7 @@ impl WorkerConfig {
                 self.harness,
                 self.model.as_deref(),
                 self.reasoning_effort,
+                self.version_control_mode,
             ));
         }
         let role = self
@@ -273,19 +290,43 @@ impl WorkerConfig {
             role.harness,
             role.model.as_deref(),
             role.reasoning_effort.unwrap_or(self.reasoning_effort),
+            role.version_control_mode,
         ))
     }
 
     pub fn role_catalog(&self) -> String {
-        std::iter::once((GENERALIST_ROLE, self.generalist_description.as_str()))
-            .chain(
-                self.roles
-                    .iter()
-                    .map(|(name, role)| (name.as_str(), role.description.as_str())),
+        std::iter::once((
+            GENERALIST_ROLE,
+            self.generalist_description.as_str(),
+            self.version_control_mode,
+        ))
+        .chain(self.roles.iter().map(|(name, role)| {
+            (
+                name.as_str(),
+                role.description.as_str(),
+                role.version_control_mode,
             )
-            .map(|(name, description)| format!("- {name}: {description}"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        }))
+        .map(|(name, description, mode)| format!("- {name} [{}]: {description}", mode.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n")
+    }
+
+    pub fn uses_git_worktrees(&self) -> bool {
+        self.version_control_mode == VersionControlMode::GitWorktree
+            || self
+                .roles
+                .values()
+                .any(|role| role.version_control_mode == VersionControlMode::GitWorktree)
+    }
+}
+
+impl VersionControlMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SharedCheckout => "shared-checkout",
+            Self::GitWorktree => "git-worktree",
+        }
     }
 }
 
@@ -302,6 +343,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                 harness: WorkerHarness::Inherit,
                 model: None,
                 reasoning_effort: None,
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
         (
@@ -312,6 +354,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                 harness: WorkerHarness::Inherit,
                 model: None,
                 reasoning_effort: None,
+                version_control_mode: VersionControlMode::GitWorktree,
             },
         ),
     ]
@@ -363,7 +406,10 @@ mod tests {
         assert!(!parsed.yolo);
         assert_eq!(parsed.orchestrator.max_parallel, Some(4));
         assert_eq!(parsed.workers.max_parallel, None);
-        assert!(!parsed.use_git_worktrees);
+        assert_eq!(
+            parsed.workers.version_control_mode,
+            VersionControlMode::GitWorktree
+        );
     }
 
     #[test]
@@ -371,6 +417,18 @@ mod tests {
         let mut config = Config::default();
         config.orchestrator.max_parallel = Some(0);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_version_control_modes() {
+        let raw = toml::to_string_pretty(&Config::default())
+            .unwrap()
+            .replacen(
+                "version_control_mode = \"git-worktree\"",
+                "version_control_mode = \"branch\"",
+                1,
+            );
+        assert!(toml::from_str::<Config>(&raw).is_err());
     }
 
     #[test]
@@ -388,6 +446,16 @@ mod tests {
             .unwrap()
             .replace("[git]\n", "[git]\nuse_worktrees = false\n");
         assert!(toml::from_str::<Config>(&raw).is_err());
+    }
+
+    #[test]
+    fn rejects_removed_global_worktree_settings() {
+        for setting in ["enable_git_worktree = true", "use_git_worktrees = true"] {
+            let raw = toml::to_string_pretty(&Config::default())
+                .unwrap()
+                .replace("yolo = false", &format!("yolo = false\n{setting}"));
+            assert!(toml::from_str::<Config>(&raw).is_err());
+        }
     }
 
     #[test]
@@ -445,6 +513,7 @@ mod tests {
                 harness: WorkerHarness::Opencode,
                 model: Some("research-model".into()),
                 reasoning_effort: Some(ReasoningEffort::Low),
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
 
@@ -452,13 +521,20 @@ mod tests {
         assert_eq!(generalist.1, WorkerHarness::Inherit);
         assert_eq!(generalist.2, None);
         assert_eq!(generalist.3, ReasoningEffort::Default);
+        assert_eq!(generalist.4, VersionControlMode::GitWorktree);
 
         let research = config.workers.role(Some("research")).unwrap();
         assert_eq!(research.0, "Investigate options and gather evidence");
         assert_eq!(research.1, WorkerHarness::Opencode);
         assert_eq!(research.2, Some("research-model"));
         assert_eq!(research.3, ReasoningEffort::Low);
-        assert!(config.workers.role_catalog().contains("- research:"));
+        assert_eq!(research.4, VersionControlMode::SharedCheckout);
+        assert!(
+            config
+                .workers
+                .role_catalog()
+                .contains("- research [shared-checkout]:")
+        );
         assert!(config.validate().is_ok());
 
         let raw = toml::to_string_pretty(&config).unwrap();
@@ -489,6 +565,10 @@ cleanup_on_success = true
         assert_eq!(config.orchestrator.max_parallel, None);
         assert_eq!(config.max_parallel(), 4);
         assert_eq!(
+            config.workers.version_control_mode,
+            VersionControlMode::SharedCheckout
+        );
+        assert_eq!(
             config.workers.generalist_description,
             default_generalist_description()
         );
@@ -514,6 +594,7 @@ cleanup_on_success = true
                 harness: WorkerHarness::Inherit,
                 model: None,
                 reasoning_effort: None,
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
         assert!(config.validate().is_err());
@@ -526,6 +607,7 @@ cleanup_on_success = true
                 harness: WorkerHarness::Inherit,
                 model: None,
                 reasoning_effort: None,
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
         assert!(config.validate().is_err());

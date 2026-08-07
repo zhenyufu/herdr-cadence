@@ -13,22 +13,22 @@ pub fn orchestrator(
 ) -> String {
     let workers = &config.workers;
     let max_parallel = config.max_parallel();
-    let use_worktrees = config.use_git_worktrees;
+    let worktrees_enabled = workers.uses_git_worktrees();
     let global_yolo = config.yolo;
     let roles = workers.role_catalog();
-    let checkout_guidance = if use_worktrees {
+    let checkout_guidance = if worktrees_enabled {
         if global_yolo {
-            "Workers run in isolated Herdr worktrees with YOLO full host access. Keep them strictly within their assigned scope."
+            "Each role's configured version_control_mode fixes its checkout: git-worktree roles are isolated; shared-checkout roles directly share the project checkout. Do not choose a mode when spawning. Every Worker has YOLO full host access and must stay strictly within its assigned scope."
         } else {
-            "Workers run autonomously in isolated Herdr worktrees. Codex Workers can write only their worktree and Cadence state; unavailable external actions fail instead of asking the user."
+            "Each role's configured version_control_mode fixes its checkout: git-worktree roles are isolated; shared-checkout roles directly share the project checkout. Do not choose a mode when spawning. Isolated Codex Workers can write only their worktree and Cadence state."
         }
     } else if global_yolo {
         "Workers share the base checkout with global YOLO full host access. Keep their path scopes non-overlapping and strictly bounded."
     } else {
         "Workers run in separate tabs but share the base checkout. Keep their path scopes non-overlapping."
     };
-    let integration_guidance = if use_worktrees {
-        "When a Worker completes, inspect its report and acceptance evidence first, request a focused follow-up if needed, then run `worker integrate <id>` to accept its commit. Handle routine verification yourself; involve the user only for material scope, destructive actions, or retained conflicts."
+    let integration_guidance = if worktrees_enabled {
+        "For an isolated-worktree Worker, inspect its report and acceptance evidence, request a focused follow-up if needed, then run `worker integrate <id>`. Shared-checkout Workers integrate automatically when configured. Handle routine verification yourself; involve the user only for material scope, destructive actions, or retained conflicts."
     } else {
         "Cadence integrates clean commits automatically when configured."
     };
@@ -48,7 +48,7 @@ pub fn orchestrator(
 Available Worker roles:
 {roles}
 
-Choose the role whose description best matches each task. Use `generalist` when no specialized role is a good match. Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. Create a JSON request with title, task, scope, acceptance, and role; harness, model, and reasoning_effort are optional overrides. Then run:
+Choose the role whose description best matches each task. Use `generalist` when no specialized role is a good match. Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. A shared-checkout Worker may create a root Markdown artifact named for its display name when useful, but include that path in its assigned scope. Create a JSON request with title, task, scope, acceptance, and role; harness, model, and reasoning_effort are optional overrides. Then run:
   {bin} --state-dir {state} --project-root {root} worker spawn --request-file <path>
 Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. {integration_guidance} Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no Workers remain active.
 
@@ -90,7 +90,7 @@ pub fn worker(
     let git_guidance = if worker.use_worktree {
         "Commit all completed work in this isolated worktree."
     } else {
-        "You share the base checkout with other Workers. Stage only paths in your allowed scope, create exactly one commit for this task, and include its commit_sha in the report."
+        "You directly share the project checkout with other Workers. You may create a Markdown artifact named for your Worker in the project root only when that path is in your allowed scope. Stage only paths in scope, create exactly one commit for changed files, and include its commit_sha in the report."
     };
     let permission_guidance = match (worker.harness, worker.use_worktree, worker.yolo) {
         (crate::config::Harness::Codex, true, false) => {

@@ -77,7 +77,8 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("harness = \"codex\""));
     assert!(config.contains("model = \"gpt-5.6-sol\""));
     assert!(config.contains("reasoning_effort = \"high\""));
-    assert!(config.contains("use_git_worktrees = false"));
+    assert!(config.contains("version_control_mode = \"git-worktree\""));
+    assert!(config.contains("version_control_mode = \"shared-checkout\""));
     assert!(config.contains("generalist_description ="));
     assert!(config.contains("[workers.roles.research]"));
     assert!(config.contains("[workers.roles.qa]"));
@@ -87,7 +88,10 @@ fn enables_and_reports_project_status() {
     assert_eq!(parsed.orchestrator.model.as_deref(), Some("gpt-5.6-sol"));
     assert_eq!(parsed.workers.max_parallel, None);
     assert!(!parsed.yolo);
-    assert!(!parsed.use_git_worktrees);
+    assert_eq!(
+        parsed.workers.version_control_mode,
+        herdr_cadence::config::VersionControlMode::GitWorktree
+    );
     assert!(!repo.path().join("AGENTS.md").exists());
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);
@@ -153,7 +157,6 @@ fn validates_and_resolves_project_config() {
     let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
     assert_eq!(value["valid"], true);
     assert_eq!(value["enabled"], true);
-    assert_eq!(value["use_git_worktrees"], false);
     assert_eq!(value["orchestrator"]["harness"], "codex");
     assert_eq!(value["orchestrator"]["model"], "gpt-5.6-sol");
     assert_eq!(value["orchestrator"]["reasoning_effort"], "high");
@@ -162,6 +165,53 @@ fn validates_and_resolves_project_config() {
     assert!(roles.iter().any(|role| role["name"] == "generalist"));
     assert!(roles.iter().any(|role| role["name"] == "qa"));
     assert!(roles.iter().any(|role| role["name"] == "research"));
+    assert!(roles.iter().any(|role| {
+        role["name"] == "research" && role["version_control_mode"] == "shared-checkout"
+    }));
+    assert!(
+        roles
+            .iter()
+            .any(|role| { role["name"] == "qa" && role["version_control_mode"] == "git-worktree" })
+    );
+}
+
+#[test]
+fn rejects_worker_checkout_overrides() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    assert!(
+        cadence(repo.path(), state.path(), &["action", "enable-project"])
+            .status
+            .success()
+    );
+    git(repo.path(), &["add", ".herdr/cadence.toml"]);
+    git(repo.path(), &["commit", "-m", "enable cadence"]);
+    let request = state.path().join("request.json");
+    fs::write(
+        &request,
+        r#"{"title":"Review API","task":"Review the API","scope":["src/api"],"acceptance":["Review complete"],"use_git_worktree":true}"#,
+    )
+    .unwrap();
+
+    let spawned = cadence(
+        repo.path(),
+        state.path(),
+        &[
+            "worker",
+            "spawn",
+            "--request-file",
+            request.to_str().unwrap(),
+        ],
+    );
+
+    assert!(!spawned.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&spawned.stderr).unwrap();
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("use_git_worktree")
+    );
 }
 
 #[test]
@@ -184,7 +234,7 @@ fn starts_dirty_but_blocks_workers_until_clean() {
     run_worker_flow(true, false, true);
 }
 
-fn run_worker_flow(use_worktrees: bool, global_yolo: bool, dirty_at_start: bool) {
+fn run_worker_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -210,8 +260,11 @@ fn run_worker_flow(use_worktrees: bool, global_yolo: bool, dirty_at_start: bool)
             "[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\nreasoning_effort = \"low\"",
             1,
         );
-    if use_worktrees {
-        config = config.replace("use_git_worktrees = false", "use_git_worktrees = true");
+    if !use_worktree {
+        config = config.replace(
+            "reasoning_effort = \"low\"\nversion_control_mode = \"git-worktree\"",
+            "reasoning_effort = \"low\"\nversion_control_mode = \"shared-checkout\"",
+        );
     }
     if global_yolo {
         config = config.replacen("yolo = false", "yolo = true", 1);
@@ -325,7 +378,7 @@ fi
     let run = &project["runs"][active_run];
     assert_eq!(run["base_workspace_id"], "orch-ws");
     assert_eq!(run["orchestrator"]["workspace_id"], "orch-ws");
-    if use_worktrees {
+    if use_worktree {
         let resumed = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
             .args([
                 "--state-dir",
@@ -409,7 +462,7 @@ fi
     assert_eq!(value["role"], "qa");
     assert_eq!(value["model"], "qa-model");
     assert_eq!(value["reasoning_effort"], "low");
-    if use_worktrees {
+    if use_worktree {
         assert_eq!(value["workspace_id"], "worker-ws");
     } else {
         assert!(value["workspace_id"].is_null());
@@ -426,15 +479,22 @@ fi
     assert!(calls.contains("[Cadence]"));
     assert_eq!(
         calls.matches("pane process-info --pane pane-orch").count(),
-        if use_worktrees { 3 } else { 2 }
+        if use_worktree { 3 } else { 2 }
     );
     assert!(calls.contains("agent start cadence-orch-"));
     assert_eq!(
         calls.matches("agent start cadence-orch-").count(),
-        if use_worktrees { 3 } else { 2 }
+        if use_worktree { 3 } else { 2 }
     );
     assert!(calls.contains("--kind opencode"));
-    assert!(calls.contains("- qa: Use for test validation"));
+    assert!(calls.contains(&format!(
+        "- qa [{}]: Use for test validation",
+        if use_worktree {
+            "git-worktree"
+        } else {
+            "shared-checkout"
+        }
+    )));
     assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
     assert!(calls.contains("No user task is assigned yet"));
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
@@ -456,7 +516,8 @@ fi
     } else {
         assert!(!calls.contains(&format!("{orchestrator_launch} --auto")));
     }
-    if use_worktrees {
+    assert!(calls.contains("Each role's configured version_control_mode fixes its checkout"));
+    if use_worktree {
         assert!(calls.contains("workspace get orch-ws"));
         assert!(calls.contains("tab create --workspace orch-ws"));
         assert!(calls.contains(&format!(
@@ -468,13 +529,13 @@ fi
             repo.path().canonicalize().unwrap().display()
         )));
         assert!(!calls.contains("worktree create --workspace"));
-        assert!(calls.contains("isolated Herdr worktrees"));
+        assert!(calls.contains("this isolated worktree"));
     } else {
         assert!(!calls.contains("worktree create --cwd"));
         assert!(calls.contains("tab create --workspace orch-ws"));
         assert!(calls.contains("--label [QA] Add API --no-focus"));
-        assert!(calls.contains("share the base checkout"));
-        assert!(calls.contains("create exactly one commit for this task"));
+        assert!(calls.contains("directly share the project checkout"));
+        assert!(calls.contains("create exactly one commit for changed files"));
     }
     assert!(calls.contains("agent start cadence-"));
     let worker_launch = "--kind codex --pane pane-worker --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
@@ -483,7 +544,7 @@ fi
         assert!(calls.contains(&format!(
             "{worker_launch} --dangerously-bypass-approvals-and-sandbox"
         )));
-    } else if use_worktrees {
+    } else if use_worktree {
         assert!(calls.contains(&format!(
             "{worker_launch} --sandbox workspace-write --ask-for-approval never --add-dir {}",
             state.path().display()
@@ -497,7 +558,7 @@ fi
     assert!(calls.contains("Role guidance: Use for test validation"));
     assert!(calls.contains("agent prompt"));
 
-    let checkout = if use_worktrees {
+    let checkout = if use_worktree {
         fs::remove_dir(&worker_path).unwrap();
         let branch = value["branch"].as_str().unwrap();
         git(
@@ -552,14 +613,14 @@ fi
     let mut completed: serde_json::Value = serde_json::from_slice(&complete.stdout).unwrap();
     assert_eq!(
         completed["status"],
-        if use_worktrees {
+        if use_worktree {
             "completed"
         } else {
             "integrated"
         }
     );
     assert_eq!(completed["report"]["changed_paths"][0], "src/api/mod.rs");
-    if use_worktrees {
+    if use_worktree {
         assert!(!repo.path().join("src/api/mod.rs").exists());
         let integrate = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
             .args([
@@ -616,11 +677,47 @@ fi
     );
     let follow_up: serde_json::Value = serde_json::from_slice(&follow_up.stdout).unwrap();
     assert_eq!(follow_up["worker_id"], "worker-2");
+    assert_eq!(follow_up["branch"], "main");
+    assert!(follow_up["workspace_id"].is_null());
+
+    fs::write(
+        &report,
+        r#"{"status":"completed","summary":"Research complete","tests":[],"changed_paths":[],"blockers":[]}"#,
+    )
+    .unwrap();
+    let research_complete = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+        .args([
+            "--state-dir",
+            state.path().to_str().unwrap(),
+            "--project-root",
+            repo.path().to_str().unwrap(),
+            "worker",
+            "complete",
+            "worker-2",
+            "--report-file",
+            report.to_str().unwrap(),
+        ])
+        .env("HERDR_BIN_PATH", &fake)
+        .output()
+        .unwrap();
+    assert!(
+        research_complete.status.success(),
+        "{}",
+        String::from_utf8_lossy(&research_complete.stderr)
+    );
+    let research_complete: serde_json::Value =
+        serde_json::from_slice(&research_complete.stdout).unwrap();
+    assert_eq!(research_complete["status"], "integrated");
+    assert!(research_complete["report"]["commit_sha"].is_null());
+    assert_eq!(
+        research_complete["report"]["changed_paths"],
+        serde_json::json!([])
+    );
 
     let calls = fs::read_to_string(&log).unwrap();
     assert!(calls.contains("agent send-keys cadence-"));
     assert!(calls.contains("ctrl+c"));
-    if use_worktrees {
+    if use_worktree {
         assert!(calls.contains("worktree remove --workspace worker-ws --force"));
     } else {
         assert!(calls.contains("tab close tab-worker"));

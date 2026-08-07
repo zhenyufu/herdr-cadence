@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::config::{Config, GENERALIST_ROLE, Harness};
+use crate::config::{Config, GENERALIST_ROLE, Harness, VersionControlMode};
 use crate::git;
 use crate::herdr::Herdr;
 use crate::model::{
@@ -203,7 +203,7 @@ impl App {
         let roles = std::iter::once(GENERALIST_ROLE)
             .chain(config.workers.roles.keys().map(String::as_str))
             .map(|name| {
-                let (description, harness, model, reasoning_effort) =
+                let (description, harness, model, reasoning_effort, version_control_mode) =
                     config.workers.role(Some(name))?;
                 Ok(json!({
                     "name": name,
@@ -211,6 +211,7 @@ impl App {
                     "harness": harness.resolve(config.orchestrator.harness),
                     "model": model,
                     "reasoning_effort": reasoning_effort,
+                    "version_control_mode": version_control_mode,
                 }))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -219,7 +220,6 @@ impl App {
             "config": Config::path(&self.root),
             "enabled": config.enabled,
             "yolo": config.yolo,
-            "use_git_worktrees": config.use_git_worktrees,
             "orchestrator": {
                 "harness": config.orchestrator.harness,
                 "model": config.orchestrator.model,
@@ -232,7 +232,6 @@ impl App {
 
     pub fn spawn_worker(&self, request_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
-        let use_worktree = config.use_git_worktrees;
         git::ensure_clean(&self.root)
             .context("cannot spawn a Worker until the base checkout is committed or stashed")?;
         let request: WorkerRequest = serde_json::from_reader(
@@ -241,8 +240,14 @@ impl App {
         )?;
         let request = request.validate_and_normalize()?;
         let role_name = request.role.as_deref().unwrap_or(GENERALIST_ROLE);
-        let (role_description, role_harness, role_model, role_reasoning_effort) =
-            config.workers.role(Some(role_name))?;
+        let (
+            role_description,
+            role_harness,
+            role_model,
+            role_reasoning_effort,
+            version_control_mode,
+        ) = config.workers.role(Some(role_name))?;
+        let use_worktree = version_control_mode == VersionControlMode::GitWorktree;
         let role_name = role_name.to_string();
         let role_description = role_description.to_string();
         let role_model = role_model.map(str::to_string);
@@ -469,12 +474,8 @@ impl App {
                     }
                     let changed_paths =
                         git::changed_paths(&checkout, &worker.base_sha, &worker_head)?;
-                    (worker_head, changed_paths)
-                } else {
-                    let reported_commit = report
-                        .commit_sha
-                        .as_deref()
-                        .context("shared-checkout Workers must report commit_sha")?;
+                    (Some(worker_head), changed_paths)
+                } else if let Some(reported_commit) = report.commit_sha.as_deref() {
                     let worker_commit = git::resolve_commit(&checkout, reported_commit)?;
                     ensure!(
                         worker_commit != worker.base_sha,
@@ -490,9 +491,18 @@ impl App {
                         "Worker commit is not on the current base branch"
                     );
                     let changed_paths = git::changed_paths_for_commit(&checkout, &worker_commit)?;
-                    (worker_commit, changed_paths)
+                    (Some(worker_commit), changed_paths)
+                } else {
+                    ensure!(
+                        report.changed_paths.is_empty(),
+                        "shared-checkout Workers must report commit_sha when files changed"
+                    );
+                    (None, Vec::new())
                 };
-                ensure!(!changed_paths.is_empty(), "Worker commits changed no paths");
+                ensure!(
+                    worker_head.is_none() || !changed_paths.is_empty(),
+                    "Worker commits changed no paths"
+                );
                 let outside_scope = changed_paths
                     .iter()
                     .filter(|path| !path_within_scope(path, &worker.scope))
@@ -503,7 +513,7 @@ impl App {
                     "Worker changed paths outside its reserved scope: {}",
                     outside_scope.join(", ")
                 );
-                report.commit_sha = Some(worker_head);
+                report.commit_sha = worker_head;
                 report.changed_paths = changed_paths;
                 self.store_report(&key, worker_id, report, WorkerStatus::Completed)?;
                 if worker.use_worktree {
@@ -551,16 +561,17 @@ impl App {
                 run.base_branch
             );
             if !worker.use_worktree {
-                let commit = worker
+                if let Some(commit) = worker
                     .report
                     .as_ref()
                     .and_then(|report| report.commit_sha.as_deref())
-                    .context("Worker report omitted commit_sha")?;
-                let current_head = git::head(&self.root)?;
-                ensure!(
-                    git::is_ancestor(&self.root, commit, &current_head)?,
-                    "Worker commit is not on the current base branch"
-                );
+                {
+                    let current_head = git::head(&self.root)?;
+                    ensure!(
+                        git::is_ancestor(&self.root, commit, &current_head)?,
+                        "Worker commit is not on the current base branch"
+                    );
+                }
                 return Ok(());
             }
             git::ensure_clean(&self.root)?;
