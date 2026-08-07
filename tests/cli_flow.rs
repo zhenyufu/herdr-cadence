@@ -270,6 +270,7 @@ fi
     );
     let value: serde_json::Value = serde_json::from_slice(&spawn.stdout).unwrap();
     assert_eq!(value["worker_id"], "worker-1");
+    assert_eq!(value["display_name"], "[QA] Add API");
     assert_eq!(value["role"], "qa");
     if use_worktrees {
         assert_eq!(value["workspace_id"], "worker-ws");
@@ -300,6 +301,8 @@ fi
     assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
     assert!(calls.contains("No user task is assigned yet"));
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
+    assert!(calls.contains("use each spawn result's `display_name`"));
+    assert!(calls.contains("do not call agents Worker 2 or worker-2"));
     assert!(calls.contains(
         "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
     ));

@@ -338,8 +338,9 @@ impl App {
             worker_mut(active_run_mut(store, &key)?, &worker.id)?.status = WorkerStatus::Working;
             Ok(())
         })?;
+        let display_name = worker_display_name(&worker);
         Ok(
-            json!({"status": "working", "worker_id": worker.id, "role": worker.role, "agent": worker.agent_name, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
+            json!({"status": "working", "worker_id": worker.id, "display_name": display_name, "role": worker.role, "agent": worker.agent_name, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
         )
     }
 
@@ -376,12 +377,18 @@ impl App {
             "report summary cannot be empty"
         );
         let key = project_key(&self.root);
+        let display_name = {
+            let run = self.active_run_snapshot(&key)?;
+            worker_display_name(run.workers.get(worker_id).context("unknown Worker")?)
+        };
         match report.status {
             ReportStatus::Blocked => {
                 self.store_report(&key, worker_id, report, WorkerStatus::Blocked)?;
                 self.notify(
                     &key,
-                    &format!("Worker {worker_id} is blocked. Inspect its report and follow up."),
+                    &format!(
+                        "{display_name} is blocked (internal ID: {worker_id}). Inspect its report and follow up."
+                    ),
                 );
                 self.worker_status(worker_id)
             }
@@ -389,7 +396,9 @@ impl App {
                 self.store_report(&key, worker_id, report, WorkerStatus::Failed)?;
                 self.notify(
                     &key,
-                    &format!("Worker {worker_id} failed. Its changes were retained."),
+                    &format!(
+                        "{display_name} failed (internal ID: {worker_id}). Its changes were retained."
+                    ),
                 );
                 self.worker_status(worker_id)
             }
@@ -524,10 +533,14 @@ impl App {
                 })?;
                 let message = if worker.use_worktree {
                     format!(
-                        "Worker {worker_id} integrated successfully. Review its report; its worktree will be cleaned up after exit."
+                        "{} integrated successfully (internal ID: {worker_id}). Review its report; its worktree will be cleaned up after exit.",
+                        worker_display_name(&worker)
                     )
                 } else {
-                    format!("Worker {worker_id} completed successfully on the shared base branch.")
+                    format!(
+                        "{} completed successfully on the shared base branch (internal ID: {worker_id}).",
+                        worker_display_name(&worker)
+                    )
                 };
                 self.notify(&key, &message);
                 if config.git.cleanup_on_success && !self.herdr.agent_exists(&worker.agent_name) {
@@ -542,7 +555,7 @@ impl App {
                     stored.error = Some(error.to_string());
                     Ok(())
                 })?;
-                self.notify(&key, &format!("Worker {worker_id} could not integrate. Its changes and isolated resources were retained."));
+                self.notify(&key, &format!("{} could not integrate (internal ID: {worker_id}). Its changes and isolated resources were retained.", worker_display_name(&worker)));
                 self.worker_status(worker_id)
             }
         }
@@ -638,7 +651,13 @@ impl App {
                     Ok(())
                 })?;
                 if status == "blocked" && previous != Some("blocked") {
-                    self.notify(&key, &format!("Worker {worker_id} is waiting for input."));
+                    self.notify(
+                        &key,
+                        &format!(
+                            "{} is waiting for input (internal ID: {worker_id}).",
+                            worker_display_name(&worker)
+                        ),
+                    );
                 } else if matches!(status, "idle" | "done")
                     && worker.status == WorkerStatus::Working
                     && !matches!(previous, Some("idle" | "done"))
@@ -646,7 +665,8 @@ impl App {
                     self.notify(
                         &key,
                         &format!(
-                            "Worker {worker_id} is idle but has not submitted a completion report."
+                            "{} is idle but has not submitted a completion report (internal ID: {worker_id}).",
+                            worker_display_name(&worker)
                         ),
                     );
                 }
@@ -815,7 +835,8 @@ impl App {
             self.notify(
                 key,
                 &format!(
-                    "Worker {worker_id} exited without completing; its changes and isolated resources were retained."
+                    "{} exited without completing (internal ID: {worker_id}); its changes and isolated resources were retained.",
+                    worker_display_name(worker)
                 ),
             );
         }
@@ -968,6 +989,10 @@ fn display_role(role: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn worker_display_name(worker: &Worker) -> String {
+    format!("[{}] {}", display_role(&worker.role), worker.title)
 }
 
 #[cfg(test)]

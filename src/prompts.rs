@@ -28,7 +28,7 @@ Choose the role whose description best matches each task. Use `generalist` when 
   {bin} --state-dir {state} --project-root {root} worker spawn --request-file <path>
 Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. Cadence integrates clean commits automatically. Resolve retained failures/conflicts with the user. When no Workers are active and the orchestration is finished, run `run finish` with the same global flags.
 
-Do not invent task dependencies or let Workers delegate. Keep the user informed of assignments and integrated results."#,
+In user-facing messages, use each spawn result's `display_name`, such as `[Researcher] Review the README`; do not call agents Worker 2 or worker-2. Use Worker IDs only in Cadence commands or when needed to disambiguate duplicate names. Do not invent task dependencies or let Workers delegate. Keep the user informed of assignments and integrated results."#,
         run_id = run.id,
         bin = binary.display(),
         state = state_dir.display(),
