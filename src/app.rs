@@ -292,7 +292,11 @@ impl App {
         })?;
 
         let run = self.active_run_snapshot(&key)?;
-        let label = format!("Cadence: {}", truncate(&worker.title, 40));
+        let label = format!(
+            "[{}] {}",
+            truncate(&display_role(&worker.role), 20),
+            truncate(&worker.title, 40)
+        );
         let terminal = match if worker.use_worktree {
             self.herdr
                 .create_worker_worktree(&self.root, &worker.branch, &worker.base_sha, &label)
@@ -944,4 +948,36 @@ fn slug(value: &str, max: usize) -> String {
 
 fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
+}
+
+fn display_role(role: &str) -> String {
+    if role.eq_ignore_ascii_case("qa") {
+        return "QA".into();
+    }
+    if role.eq_ignore_ascii_case("research") || role.eq_ignore_ascii_case("researcher") {
+        return "Researcher".into();
+    }
+    role.split(|character: char| !character.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut characters = part.chars();
+            characters
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + characters.as_str())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_role;
+
+    #[test]
+    fn formats_worker_roles_for_labels() {
+        assert_eq!(display_role("research"), "Researcher");
+        assert_eq!(display_role("qa"), "QA");
+        assert_eq!(display_role("docs_writer"), "Docs Writer");
+    }
 }

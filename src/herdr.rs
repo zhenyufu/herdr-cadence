@@ -97,6 +97,7 @@ impl Herdr {
         root: &Path,
         env: &[(&str, String)],
     ) -> Result<CreatedTerminal> {
+        let label = orchestrator_label(root);
         let mut args = vec![
             "tab".to_string(),
             "create".into(),
@@ -105,7 +106,7 @@ impl Herdr {
             "--cwd".into(),
             root.display().to_string(),
             "--label".into(),
-            "Cadence Orchestrator".into(),
+            label,
             "--focus".into(),
         ];
         for (key, value) in env {
@@ -122,17 +123,14 @@ impl Herdr {
         root: &Path,
         env: &[(&str, String)],
     ) -> Result<CreatedTerminal> {
-        let project = root
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap_or("project");
+        let label = orchestrator_label(root);
         let mut args = vec![
             "workspace".to_string(),
             "create".into(),
             "--cwd".into(),
             root.display().to_string(),
             "--label".into(),
-            format!("Cadence: {project}"),
+            label.clone(),
             "--focus".into(),
         ];
         for (key, value) in env {
@@ -140,7 +138,7 @@ impl Herdr {
             args.push(format!("{key}={value}"));
         }
         let terminal = parse_created(&self.checked(args)?)?;
-        self.checked(["tab", "rename", &terminal.tab_id, "Cadence Orchestrator"])?;
+        self.checked(["tab", "rename", &terminal.tab_id, &label])?;
         Ok(terminal)
     }
 
@@ -253,6 +251,14 @@ impl Herdr {
         self.checked(["tab", "close", tab_id])?;
         Ok(())
     }
+}
+
+fn orchestrator_label(root: &Path) -> String {
+    let project = root
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("project");
+    format!("{project} (Cadence)")
 }
 
 fn command_error(output: &Output) -> anyhow::Error {
