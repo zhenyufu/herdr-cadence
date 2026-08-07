@@ -254,6 +254,8 @@ fi
     assert!(calls.contains("--kind opencode"));
     assert!(calls.contains("- qa: Use for test validation"));
     assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
+    assert!(calls.contains("No user task is assigned yet"));
+    assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
     assert!(calls.contains(
         "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
     ));

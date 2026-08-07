@@ -19,7 +19,7 @@ pub fn orchestrator(
         "Workers run in separate tabs but share the base checkout. Keep their path scopes non-overlapping."
     };
     format!(
-        r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. Plan and coordinate implementation; delegate bounded implementation tasks to Workers instead of doing those tasks yourself. {checkout_guidance}
+        r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. No user task is assigned yet. Do not inspect the repository, run commands, or create Workers until the user provides a task; reply briefly that Cadence is ready, then wait. Plan and coordinate implementation; delegate bounded implementation tasks to Workers instead of doing those tasks yourself. {checkout_guidance}
 
 Available Worker roles:
 {roles}
