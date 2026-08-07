@@ -112,7 +112,6 @@ impl Herdr {
 
     pub fn create_worker_worktree(
         &self,
-        workspace_id: &str,
         root: &Path,
         branch: &str,
         base: &str,
@@ -121,8 +120,6 @@ impl Herdr {
         let args = vec![
             "worktree".to_string(),
             "create".into(),
-            "--workspace".into(),
-            workspace_id.into(),
             "--cwd".into(),
             root.display().to_string(),
             "--branch".into(),

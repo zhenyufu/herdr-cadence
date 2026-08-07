@@ -276,13 +276,8 @@ impl App {
         let run = self.active_run_snapshot(&key)?;
         let label = format!("Cadence: {}", truncate(&worker.title, 40));
         let terminal = match if worker.use_worktree {
-            self.herdr.create_worker_worktree(
-                &run.base_workspace_id,
-                &self.root,
-                &worker.branch,
-                &worker.base_sha,
-                &label,
-            )
+            self.herdr
+                .create_worker_worktree(&self.root, &worker.branch, &worker.base_sha, &label)
         } else {
             self.herdr
                 .create_worker_tab(&run.base_workspace_id, &self.root, &label)

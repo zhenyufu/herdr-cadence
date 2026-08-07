@@ -260,7 +260,11 @@ fi
         "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
     ));
     if use_worktrees {
-        assert!(calls.contains("worktree create --workspace base-ws"));
+        assert!(calls.contains(&format!(
+            "worktree create --cwd {}",
+            repo.path().canonicalize().unwrap().display()
+        )));
+        assert!(!calls.contains("worktree create --workspace"));
         assert!(calls.contains("Workers run in isolated Herdr worktrees"));
     } else {
         assert!(!calls.contains("worktree create --workspace base-ws"));
