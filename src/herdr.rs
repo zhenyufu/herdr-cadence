@@ -71,6 +71,11 @@ impl Herdr {
             .is_ok_and(|output| output.status.success())
     }
 
+    pub fn workspace_exists(&self, workspace_id: &str) -> bool {
+        self.output(["workspace", "get", workspace_id])
+            .is_ok_and(|output| output.status.success())
+    }
+
     pub fn focus_agent(&self, name: &str) -> Result<()> {
         self.checked(["agent", "focus", name])?;
         Ok(())
@@ -107,7 +112,36 @@ impl Herdr {
             args.push("--env".into());
             args.push(format!("{key}={value}"));
         }
-        parse_created(&self.checked(args)?)
+        let mut terminal = parse_created(&self.checked(args)?)?;
+        terminal.workspace_id = Some(workspace_id.to_string());
+        Ok(terminal)
+    }
+
+    pub fn create_orchestrator_workspace(
+        &self,
+        root: &Path,
+        env: &[(&str, String)],
+    ) -> Result<CreatedTerminal> {
+        let project = root
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or("project");
+        let mut args = vec![
+            "workspace".to_string(),
+            "create".into(),
+            "--cwd".into(),
+            root.display().to_string(),
+            "--label".into(),
+            format!("Cadence: {project}"),
+            "--focus".into(),
+        ];
+        for (key, value) in env {
+            args.push("--env".into());
+            args.push(format!("{key}={value}"));
+        }
+        let terminal = parse_created(&self.checked(args)?)?;
+        self.checked(["tab", "rename", &terminal.tab_id, "Cadence Orchestrator"])?;
+        Ok(terminal)
     }
 
     pub fn create_worker_worktree(

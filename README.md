@@ -1,6 +1,6 @@
 # Cadence
 
-Cadence is a Herdr plugin that gives one Codex or OpenCode **Orchestrator** a small fleet of **Workers**. You talk to the Orchestrator; Cadence creates Worker tabs, tracks reports, and can optionally isolate work in Git worktrees.
+Cadence is a Herdr plugin that gives one Codex or OpenCode **Orchestrator** a small fleet of **Workers**. You talk to the Orchestrator in its dedicated Herdr workspace; Cadence creates Worker tabs, tracks reports, and can optionally isolate work in Git worktrees.
 
 ## Install
 
@@ -23,6 +23,20 @@ herdr plugin action invoke herdr-cadence.start
 ```
 
 Cadence is globally installed but only acts in repositories with an enabled config. It never creates or changes `AGENTS.md`; role and task context is injected when each agent starts.
+
+## Codex approvals
+
+Codex may request permission when an agent runs the Cadence binary outside its project sandbox. At the first request, use Codex's option to always allow the suggested command prefix. To configure it manually, add this rule to `~/.codex/rules/default.rules`:
+
+```python
+prefix_rule(
+    pattern=["<cadence-bin>", "--state-dir", "<cadence-state-dir>", "--project-root"],
+    decision="allow",
+    justification="Allow Cadence to coordinate Workers",
+)
+```
+
+Replace `<cadence-bin>` and `<cadence-state-dir>` with the absolute values shown in the permission request, then restart the Codex agents. The rule applies to Cadence in any enabled project while remaining scoped to that binary and state directory.
 
 ## Configuration
 

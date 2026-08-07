@@ -95,6 +95,7 @@ impl App {
                     name,
                     harness: config.orchestrator.harness,
                     model: config.orchestrator.model.clone(),
+                    workspace_id: None,
                     tab_id: None,
                     pane_id: None,
                 },
@@ -122,10 +123,30 @@ impl App {
             ("CADENCE_PROJECT_ROOT", self.root.display().to_string()),
             ("CADENCE_RUN_ID", run.id.clone()),
         ];
-        let terminal = self
-            .herdr
-            .create_orchestrator_tab(workspace_id, &self.root, &env)
-            .context("failed to create the Orchestrator tab")?;
+        let existing_workspace = run
+            .orchestrator
+            .workspace_id
+            .as_deref()
+            .filter(|id| self.herdr.workspace_exists(id));
+        let terminal = if let Some(workspace_id) = existing_workspace {
+            self.herdr
+                .create_orchestrator_tab(workspace_id, &self.root, &env)
+                .context("failed to create the Orchestrator tab")?
+        } else {
+            self.herdr
+                .create_orchestrator_workspace(&self.root, &env)
+                .context("failed to create the Orchestrator workspace")?
+        };
+        self.state.update(|store| {
+            let stored = active_run_mut(store, &key)?;
+            if let Some(workspace_id) = terminal.workspace_id.clone() {
+                stored.base_workspace_id = workspace_id.clone();
+                stored.orchestrator.workspace_id = Some(workspace_id);
+            }
+            stored.orchestrator.tab_id = Some(terminal.tab_id.clone());
+            stored.orchestrator.pane_id = Some(terminal.pane_id.clone());
+            Ok(())
+        })?;
         let launch = self.herdr.start_agent(
             &run.orchestrator.name,
             run.orchestrator.harness.as_str(),
@@ -147,10 +168,7 @@ impl App {
         );
         self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
         self.state.update(|store| {
-            let stored = active_run_mut(store, &key)?;
-            stored.orchestrator.tab_id = Some(terminal.tab_id.clone());
-            stored.orchestrator.pane_id = Some(terminal.pane_id.clone());
-            stored.last_error = None;
+            active_run_mut(store, &key)?.last_error = None;
             Ok(())
         })?;
         Ok(

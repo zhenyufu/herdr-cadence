@@ -161,7 +161,9 @@ case "$*" in
     fi
     ;;
 esac
-if [ "$1 $2" = "tab create" ]; then
+if [ "$1 $2" = "workspace create" ]; then
+  printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"orch-ws"}},"tab":{{"tab_id":"tab-orch"}},"root_pane":{{"pane_id":"pane-orch"}}}}}}'
+elif [ "$1 $2" = "tab create" ]; then
   case "$*" in
     *"Cadence Orchestrator"*) tab_id="tab-orch"; pane_id="pane-orch" ;;
     *) tab_id="tab-worker"; pane_id="pane-worker" ;;
@@ -208,6 +210,38 @@ fi
         "{}",
         String::from_utf8_lossy(&start.stderr)
     );
+    let store: serde_json::Value =
+        serde_json::from_slice(&fs::read(state.path().join("state.json")).unwrap()).unwrap();
+    let project = store["projects"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    let active_run = project["active_run"].as_str().unwrap();
+    let run = &project["runs"][active_run];
+    assert_eq!(run["base_workspace_id"], "orch-ws");
+    assert_eq!(run["orchestrator"]["workspace_id"], "orch-ws");
+    if use_worktrees {
+        let resumed = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "action",
+                "start",
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .env("HERDR_WORKSPACE_ID", "base-ws")
+            .output()
+            .unwrap();
+        assert!(
+            resumed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&resumed.stderr)
+        );
+    }
 
     let request = fake_dir.path().join("request.json");
     fs::write(
@@ -244,13 +278,21 @@ fi
     }
 
     let calls = fs::read_to_string(&log).unwrap();
-    assert!(calls.contains("tab create --workspace base-ws"));
+    assert!(calls.contains(&format!(
+        "workspace create --cwd {} --label Cadence:",
+        repo.path().canonicalize().unwrap().display()
+    )));
+    assert_eq!(calls.matches("workspace create --cwd").count(), 1);
+    assert!(calls.contains("tab rename tab-orch Cadence Orchestrator"));
     assert_eq!(
         calls.matches("pane process-info --pane pane-orch").count(),
-        2
+        if use_worktrees { 3 } else { 2 }
     );
     assert!(calls.contains("agent start cadence-orch-"));
-    assert_eq!(calls.matches("agent start cadence-orch-").count(), 2);
+    assert_eq!(
+        calls.matches("agent start cadence-orch-").count(),
+        if use_worktrees { 3 } else { 2 }
+    );
     assert!(calls.contains("--kind opencode"));
     assert!(calls.contains("- qa: Use for test validation"));
     assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
@@ -260,6 +302,9 @@ fi
         "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
     ));
     if use_worktrees {
+        assert!(calls.contains("workspace get orch-ws"));
+        assert!(calls.contains("tab create --workspace orch-ws"));
+        assert!(calls.contains("--label Cadence Orchestrator --focus"));
         assert!(calls.contains(&format!(
             "worktree create --cwd {}",
             repo.path().canonicalize().unwrap().display()
@@ -267,7 +312,8 @@ fi
         assert!(!calls.contains("worktree create --workspace"));
         assert!(calls.contains("Workers run in isolated Herdr worktrees"));
     } else {
-        assert!(!calls.contains("worktree create --workspace base-ws"));
+        assert!(!calls.contains("worktree create --cwd"));
+        assert!(calls.contains("tab create --workspace orch-ws"));
         assert!(calls.contains("--label Cadence: Add API --no-focus"));
         assert!(calls.contains("share the base checkout"));
         assert!(calls.contains("create exactly one commit for this task"));
