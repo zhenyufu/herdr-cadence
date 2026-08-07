@@ -99,6 +99,41 @@ fn enables_and_reports_project_status() {
 }
 
 #[test]
+fn reports_config_parse_error_causes() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    assert!(
+        cadence(repo.path(), state.path(), &["action", "enable-project"])
+            .status
+            .success()
+    );
+    let config_path = repo.path().join(".herdr/cadence.toml");
+    let config = fs::read_to_string(&config_path).unwrap().replacen(
+        "harness = \"codex\"",
+        "harness = \"invalid\"",
+        1,
+    );
+    fs::write(config_path, config).unwrap();
+
+    let status = cadence(repo.path(), state.path(), &["action", "status"]);
+
+    assert!(!status.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&status.stderr).unwrap();
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid Cadence config")
+    );
+    assert!(error["causes"].as_array().unwrap().iter().any(|cause| {
+        cause
+            .as_str()
+            .unwrap()
+            .contains("unknown variant `invalid`")
+    }));
+}
+
+#[test]
 fn runs_worker_in_shared_checkout_by_default() {
     run_worker_flow(false, false, false);
 }

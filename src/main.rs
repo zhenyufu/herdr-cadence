@@ -80,7 +80,15 @@ enum WorkerCommand {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("{}", serde_json::json!({"error": error.to_string()}));
+        let causes = error
+            .chain()
+            .skip(1)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        eprintln!(
+            "{}",
+            serde_json::json!({"error": error.to_string(), "causes": causes})
+        );
         std::process::exit(1);
     }
 }
