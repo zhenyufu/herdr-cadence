@@ -144,7 +144,7 @@ impl Default for Config {
             yolo: false,
             orchestrator: AgentConfig {
                 harness: Harness::Codex,
-                model: Some("gpt-5.6-sol".into()),
+                model: Some("gpt-5.6-terra".into()),
                 reasoning_effort: ReasoningEffort::High,
                 max_parallel: Some(4),
             },
@@ -154,8 +154,8 @@ impl Default for Config {
             },
             workers: WorkerConfig {
                 harness: WorkerHarness::Inherit,
-                model: None,
-                reasoning_effort: ReasoningEffort::Default,
+                model: Some("gpt-5.6-terra".into()),
+                reasoning_effort: ReasoningEffort::Medium,
                 version_control_mode: VersionControlMode::GitWorktree,
                 generalist_description: default_generalist_description(),
                 max_parallel: None,
@@ -188,11 +188,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let raw = toml::to_string_pretty(&Self::default())?.replacen(
-            "harness = \"inherit\"\n",
-            "harness = \"inherit\"\n# model = \"your-model-id\"\n",
-            1,
-        );
+        let raw = toml::to_string_pretty(&Self::default())?;
         fs::write(&path, raw)?;
         Ok(path)
     }
@@ -337,12 +333,22 @@ fn default_generalist_description() -> String {
 fn default_roles() -> BTreeMap<String, RoleConfig> {
     [
         (
+            "planner".into(),
+            RoleConfig {
+                description: "Use for plan mode".into(),
+                harness: WorkerHarness::Inherit,
+                model: Some("gpt-5.6-sol".into()),
+                reasoning_effort: Some(ReasoningEffort::Xhigh),
+                version_control_mode: VersionControlMode::SharedCheckout,
+            },
+        ),
+        (
             "research".into(),
             RoleConfig {
                 description: "Use for investigation and evidence gathering".into(),
                 harness: WorkerHarness::Inherit,
-                model: None,
-                reasoning_effort: None,
+                model: Some("gpt-5.6-sol".into()),
+                reasoning_effort: Some(ReasoningEffort::High),
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -352,8 +358,8 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                 description: "Use for test planning, validation, and regression investigation"
                     .into(),
                 harness: WorkerHarness::Inherit,
-                model: None,
-                reasoning_effort: None,
+                model: Some("gpt-5.6-luna".into()),
+                reasoning_effort: Some(ReasoningEffort::Medium),
                 version_control_mode: VersionControlMode::GitWorktree,
             },
         ),
@@ -519,8 +525,8 @@ mod tests {
 
         let generalist = config.workers.role(None).unwrap();
         assert_eq!(generalist.1, WorkerHarness::Inherit);
-        assert_eq!(generalist.2, None);
-        assert_eq!(generalist.3, ReasoningEffort::Default);
+        assert_eq!(generalist.2, Some("gpt-5.6-terra"));
+        assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::GitWorktree);
 
         let research = config.workers.role(Some("research")).unwrap();

@@ -75,17 +75,24 @@ fn enables_and_reports_project_status() {
     );
     let config = fs::read_to_string(repo.path().join(".herdr/cadence.toml")).unwrap();
     assert!(config.contains("harness = \"codex\""));
-    assert!(config.contains("model = \"gpt-5.6-sol\""));
+    assert!(config.contains("model = \"gpt-5.6-terra\""));
     assert!(config.contains("reasoning_effort = \"high\""));
     assert!(config.contains("version_control_mode = \"git-worktree\""));
     assert!(config.contains("version_control_mode = \"shared-checkout\""));
     assert!(config.contains("generalist_description ="));
+    assert!(config.contains("[workers.roles.planner]"));
+    assert!(!config.contains("[workers.roles.planning]"));
     assert!(config.contains("[workers.roles.research]"));
     assert!(config.contains("[workers.roles.qa]"));
     assert!(config.find("[git]").unwrap() < config.find("[workers]").unwrap());
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
     assert_eq!(parsed.orchestrator.max_parallel, Some(4));
-    assert_eq!(parsed.orchestrator.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(parsed.orchestrator.model.as_deref(), Some("gpt-5.6-terra"));
+    assert_eq!(parsed.workers.model.as_deref(), Some("gpt-5.6-terra"));
+    assert_eq!(
+        parsed.workers.reasoning_effort,
+        herdr_cadence::config::ReasoningEffort::Medium
+    );
     assert_eq!(parsed.workers.max_parallel, None);
     assert!(!parsed.yolo);
     assert_eq!(
@@ -158,13 +165,17 @@ fn validates_and_resolves_project_config() {
     assert_eq!(value["valid"], true);
     assert_eq!(value["enabled"], true);
     assert_eq!(value["orchestrator"]["harness"], "codex");
-    assert_eq!(value["orchestrator"]["model"], "gpt-5.6-sol");
+    assert_eq!(value["orchestrator"]["model"], "gpt-5.6-terra");
     assert_eq!(value["orchestrator"]["reasoning_effort"], "high");
     assert_eq!(value["orchestrator"]["max_parallel"], 4);
     let roles = value["roles"].as_array().unwrap();
     assert!(roles.iter().any(|role| role["name"] == "generalist"));
     assert!(roles.iter().any(|role| role["name"] == "qa"));
     assert!(roles.iter().any(|role| role["name"] == "research"));
+    let planner = roles.iter().find(|role| role["name"] == "planner").unwrap();
+    assert_eq!(planner["model"], "gpt-5.6-sol");
+    assert_eq!(planner["reasoning_effort"], "xhigh");
+    assert_eq!(planner["version_control_mode"], "shared-checkout");
     assert!(roles.iter().any(|role| {
         role["name"] == "research" && role["version_control_mode"] == "shared-checkout"
     }));
@@ -246,17 +257,17 @@ fn run_worker_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) 
     let mut config = fs::read_to_string(&config_path)
         .unwrap()
         .replacen(
-            "harness = \"codex\"\nmodel = \"gpt-5.6-sol\"",
+            "harness = \"codex\"\nmodel = \"gpt-5.6-terra\"",
             "harness = \"opencode\"\nmodel = \"openai/orchestrator-model\"",
             1,
         )
         .replacen(
-            "harness = \"inherit\"\n# model = \"your-model-id\"",
-            "harness = \"codex\"\nmodel = \"worker-model\"",
+            "[workers]\nharness = \"inherit\"\nmodel = \"gpt-5.6-terra\"",
+            "[workers]\nharness = \"codex\"\nmodel = \"worker-model\"",
             1,
         )
         .replacen(
-            "[workers.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"inherit\"",
+            "[workers.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"inherit\"\nmodel = \"gpt-5.6-luna\"\nreasoning_effort = \"medium\"",
             "[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\nreasoning_effort = \"low\"",
             1,
         );

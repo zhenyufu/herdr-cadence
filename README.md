@@ -49,7 +49,7 @@ yolo = false # full access for the Orchestrator and every Worker
 
 [orchestrator]
 harness = "codex" # or "opencode"
-model = "gpt-5.6-sol" # optional; omit to use the harness default
+model = "gpt-5.6-terra" # optional; omit to use the harness default
 reasoning_effort = "high" # default / low / medium / high / xhigh
 max_parallel = 4
 
@@ -59,24 +59,31 @@ cleanup_on_success = true
 
 [workers]
 harness = "inherit" # or "codex" / "opencode"
-# model = "your-model-id" # optional; omit to use the harness default
-reasoning_effort = "default" # inherited by roles unless overridden
+model = "gpt-5.6-terra" # optional; omit to use the harness default
+reasoning_effort = "medium" # inherited by roles unless overridden
 version_control_mode = "git-worktree" # generalist: shared-checkout / git-worktree
 generalist_description = "Use for general implementation tasks that do not match a specialized role"
+
+[workers.roles.planner]
+description = "Use for plan mode"
+harness = "inherit"
+model = "gpt-5.6-sol"
+reasoning_effort = "xhigh"
+version_control_mode = "shared-checkout"
 
 [workers.roles.research]
 description = "Use for investigation and evidence gathering"
 harness = "inherit"
+model = "gpt-5.6-sol"
+reasoning_effort = "high"
 version_control_mode = "shared-checkout"
-# model = "your-research-model-id"
-# reasoning_effort = "high"
 
 [workers.roles.qa]
 description = "Use for test planning, validation, and regression investigation"
 harness = "inherit"
+model = "gpt-5.6-luna"
+reasoning_effort = "medium"
 version_control_mode = "git-worktree"
-# model = "your-qa-model-id"
-# reasoning_effort = "high"
 ```
 
 The top-level `[workers]` settings define the `generalist` fallback. The Orchestrator chooses a named role from its description and uses `generalist` when none is a good match. Named roles inherit the Worker reasoning effort unless they override it. A Worker request can override its role's harness, model, or reasoning effort, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
