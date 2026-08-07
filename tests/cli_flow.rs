@@ -87,7 +87,6 @@ fn enables_and_reports_project_status() {
     assert_eq!(parsed.orchestrator.model.as_deref(), Some("gpt-5.6-sol"));
     assert_eq!(parsed.workers.max_parallel, None);
     assert!(!parsed.yolo);
-    assert!(!parsed.workers.yolo_with_worktrees_only);
     assert!(!parsed.use_git_worktrees);
     assert!(!repo.path().join("AGENTS.md").exists());
 
@@ -167,35 +166,25 @@ fn validates_and_resolves_project_config() {
 
 #[test]
 fn runs_worker_in_shared_checkout_by_default() {
-    run_worker_flow(false, false, false, false);
+    run_worker_flow(false, false, false);
 }
 
 #[test]
 fn runs_worker_in_configured_worktree() {
-    run_worker_flow(true, false, false, false);
-}
-
-#[test]
-fn runs_worker_only_yolo_worktree() {
-    run_worker_flow(true, true, false, false);
+    run_worker_flow(true, false, false);
 }
 
 #[test]
 fn runs_every_agent_in_global_yolo() {
-    run_worker_flow(false, false, true, false);
+    run_worker_flow(false, true, false);
 }
 
 #[test]
 fn starts_dirty_but_blocks_workers_until_clean() {
-    run_worker_flow(true, false, false, true);
+    run_worker_flow(true, false, true);
 }
 
-fn run_worker_flow(
-    use_worktrees: bool,
-    worker_yolo: bool,
-    global_yolo: bool,
-    dirty_at_start: bool,
-) {
+fn run_worker_flow(use_worktrees: bool, global_yolo: bool, dirty_at_start: bool) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -226,13 +215,6 @@ fn run_worker_flow(
     }
     if global_yolo {
         config = config.replacen("yolo = false", "yolo = true", 1);
-    }
-    if worker_yolo {
-        config = config.replacen(
-            "yolo_with_worktrees_only = false",
-            "yolo_with_worktrees_only = true",
-            1,
-        );
     }
     toml::from_str::<herdr_cadence::config::Config>(&config).unwrap();
     fs::write(&config_path, config).unwrap();
@@ -497,8 +479,7 @@ fi
     assert!(calls.contains("agent start cadence-"));
     let worker_launch = "--kind codex --pane pane-worker --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
     assert!(calls.contains(worker_launch));
-    let effective_worker_yolo = worker_yolo || global_yolo;
-    if effective_worker_yolo {
+    if global_yolo {
         assert!(calls.contains(&format!(
             "{worker_launch} --dangerously-bypass-approvals-and-sandbox"
         )));

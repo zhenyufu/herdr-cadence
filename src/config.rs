@@ -42,8 +42,6 @@ pub struct WorkerConfig {
     pub model: Option<String>,
     #[serde(default)]
     pub reasoning_effort: ReasoningEffort,
-    #[serde(default)]
-    pub yolo_with_worktrees_only: bool,
     #[serde(default = "default_generalist_description")]
     pub generalist_description: String,
     // Accepted for schema v1 compatibility; new configs place this under orchestrator.
@@ -149,7 +147,6 @@ impl Default for Config {
                 harness: WorkerHarness::Inherit,
                 model: None,
                 reasoning_effort: ReasoningEffort::Default,
-                yolo_with_worktrees_only: false,
                 generalist_description: default_generalist_description(),
                 max_parallel: None,
                 roles: default_roles(),
@@ -205,9 +202,6 @@ impl Config {
         }
         if !(1..=16).contains(&self.max_parallel()) {
             bail!("orchestrator.max_parallel must be between 1 and 16");
-        }
-        if self.workers.yolo_with_worktrees_only && !self.use_git_worktrees {
-            bail!("workers.yolo_with_worktrees_only requires use_git_worktrees = true");
         }
         validate_model(self.orchestrator.model.as_deref())?;
         validate_reasoning_effort(
@@ -369,7 +363,6 @@ mod tests {
         assert!(!parsed.yolo);
         assert_eq!(parsed.orchestrator.max_parallel, Some(4));
         assert_eq!(parsed.workers.max_parallel, None);
-        assert!(!parsed.workers.yolo_with_worktrees_only);
         assert!(!parsed.use_git_worktrees);
     }
 
@@ -381,18 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn requires_worktrees_for_yolo_workers() {
-        let mut config = Config::default();
-        config.workers.yolo_with_worktrees_only = true;
-        assert!(config.validate().is_err());
-
-        config.use_git_worktrees = true;
-        assert!(config.validate().is_ok());
-
-        config.use_git_worktrees = false;
-        config.workers.yolo_with_worktrees_only = false;
-        config.yolo = true;
-        assert!(config.validate().is_ok());
+    fn rejects_removed_worker_yolo_setting() {
+        let raw = toml::to_string_pretty(&Config::default()).unwrap().replace(
+            "[workers]\n",
+            "[workers]\nyolo_with_worktrees_only = true\n",
+        );
+        assert!(toml::from_str::<Config>(&raw).is_err());
     }
 
     #[test]
@@ -501,7 +488,6 @@ cleanup_on_success = true
         assert!(!config.yolo);
         assert_eq!(config.orchestrator.max_parallel, None);
         assert_eq!(config.max_parallel(), 4);
-        assert!(!config.workers.yolo_with_worktrees_only);
         assert_eq!(
             config.workers.generalist_description,
             default_generalist_description()

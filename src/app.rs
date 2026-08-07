@@ -312,7 +312,7 @@ impl App {
                 harness,
                 model,
                 reasoning_effort,
-                yolo: config.yolo || config.workers.yolo_with_worktrees_only,
+                yolo: config.yolo,
                 use_worktree,
                 branch,
                 base_sha: base_sha.clone(),

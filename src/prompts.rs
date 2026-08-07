@@ -17,7 +17,7 @@ pub fn orchestrator(
     let global_yolo = config.yolo;
     let roles = workers.role_catalog();
     let checkout_guidance = if use_worktrees {
-        if global_yolo || workers.yolo_with_worktrees_only {
+        if global_yolo {
             "Workers run in isolated Herdr worktrees with YOLO full host access. Keep them strictly within their assigned scope."
         } else {
             "Workers run autonomously in isolated Herdr worktrees. Codex Workers can write only their worktree and Cadence state; unavailable external actions fail instead of asking the user."
