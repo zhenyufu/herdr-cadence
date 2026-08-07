@@ -1,9 +1,24 @@
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
+
+const SHELL_READY_ATTEMPTS: usize = 100;
+const SHELL_READY_RETRY_DELAY: Duration = Duration::from_millis(100);
+const AGENT_PANE_BUSY_RETRY_DELAYS: [Duration; 8] = [
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+    Duration::from_secs(1),
+    Duration::from_secs(1),
+    Duration::from_secs(1),
+];
 
 #[derive(Debug, Clone)]
 pub struct Herdr {
@@ -152,6 +167,7 @@ impl Herdr {
         pane_id: &str,
         model: Option<&str>,
     ) -> Result<()> {
+        self.wait_for_available_shell(pane_id)?;
         let mut args = vec![
             "agent".to_string(),
             "start".into(),
@@ -166,8 +182,35 @@ impl Herdr {
         if let Some(model) = model {
             args.extend(["--".into(), "--model".into(), model.into()]);
         }
-        self.checked(args)?;
-        Ok(())
+        for delay in AGENT_PANE_BUSY_RETRY_DELAYS {
+            let output = self.output(&args)?;
+            if output.status.success() {
+                return Ok(());
+            }
+            if !has_error_code(&output, "agent_pane_busy") {
+                return Err(command_error(&output));
+            }
+            thread::sleep(delay);
+        }
+        let output = self.output(args)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(command_error(&output))
+        }
+    }
+
+    fn wait_for_available_shell(&self, pane_id: &str) -> Result<()> {
+        for attempt in 0..SHELL_READY_ATTEMPTS {
+            let raw = self.checked(["pane", "process-info", "--pane", pane_id])?;
+            if shell_is_foreground(&raw)? {
+                return Ok(());
+            }
+            if attempt + 1 < SHELL_READY_ATTEMPTS {
+                thread::sleep(SHELL_READY_RETRY_DELAY);
+            }
+        }
+        bail!("Herdr pane {pane_id} did not become an available shell")
     }
 
     pub fn remove_worktree(&self, workspace_id: &str) -> Result<()> {
@@ -179,6 +222,31 @@ impl Herdr {
         self.checked(["tab", "close", tab_id])?;
         Ok(())
     }
+}
+
+fn command_error(output: &Output) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Herdr command failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
+}
+
+fn has_error_code(output: &Output, expected: &str) -> bool {
+    serde_json::from_slice::<Value>(&output.stderr)
+        .is_ok_and(|value| value.pointer("/error/code").and_then(Value::as_str) == Some(expected))
+}
+
+fn shell_is_foreground(raw: &str) -> Result<bool> {
+    let value: Value = serde_json::from_str(raw).context("Herdr returned invalid JSON")?;
+    let process = value
+        .pointer("/result/process_info")
+        .or_else(|| value.get("process_info"))
+        .context("Herdr response omitted result.process_info")?;
+    let shell_pid = process.get("shell_pid").and_then(Value::as_u64);
+    let foreground_process_group_id = process
+        .get("foreground_process_group_id")
+        .and_then(Value::as_u64);
+    Ok(shell_pid.is_some() && shell_pid == foreground_process_group_id)
 }
 
 fn parse_created(raw: &str) -> Result<CreatedTerminal> {

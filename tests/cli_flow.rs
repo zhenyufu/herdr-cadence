@@ -135,12 +135,32 @@ fn run_worker_flow(use_worktrees: bool) {
     let fake_dir = tempfile::tempdir().unwrap();
     let fake = fake_dir.path().join("herdr");
     let log = fake_dir.path().join("calls.log");
+    let busy_once = fake_dir.path().join("busy-once");
+    let shell_ready_once = fake_dir.path().join("shell-ready-once");
     let worker_path = fake_dir.path().join("worker");
     fs::create_dir(&worker_path).unwrap();
     let script = format!(
         r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
 if [ "$1 $2" = "agent get" ]; then exit 1; fi
+if [ "$1 $2" = "pane process-info" ]; then
+  if [ ! -e '{}' ]; then
+    : > '{}'
+    printf '%s\n' '{{"id":"test","result":{{"type":"pane_process_info","process_info":{{"pane_id":"test","shell_pid":123,"foreground_process_group_id":456}}}}}}'
+  else
+    printf '%s\n' '{{"id":"test","result":{{"type":"pane_process_info","process_info":{{"pane_id":"test","shell_pid":123,"foreground_process_group_id":123}}}}}}'
+  fi
+  exit 0
+fi
+case "$*" in
+  "agent start cadence-orch-"*)
+    if [ ! -e '{}' ]; then
+      : > '{}'
+      printf '%s\n' '{{"error":{{"code":"agent_pane_busy","message":"pane is not ready"}}}}' >&2
+      exit 1
+    fi
+    ;;
+esac
 if [ "$1 $2" = "tab create" ]; then
   case "$*" in
     *"Cadence Orchestrator"*) tab_id="tab-orch"; pane_id="pane-orch" ;;
@@ -157,6 +177,10 @@ else
 fi
 "#,
         log.display(),
+        shell_ready_once.display(),
+        shell_ready_once.display(),
+        busy_once.display(),
+        busy_once.display(),
         worker_path.display(),
         repo.path().display(),
         worker_path.display()
@@ -221,7 +245,12 @@ fi
 
     let calls = fs::read_to_string(&log).unwrap();
     assert!(calls.contains("tab create --workspace base-ws"));
+    assert_eq!(
+        calls.matches("pane process-info --pane pane-orch").count(),
+        2
+    );
     assert!(calls.contains("agent start cadence-orch-"));
+    assert_eq!(calls.matches("agent start cadence-orch-").count(), 2);
     assert!(calls.contains("--kind opencode"));
     assert!(calls.contains("- qa: Use for test validation"));
     assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
