@@ -95,6 +95,7 @@ fn enables_and_reports_project_status() {
     assert!(status.status.success());
     let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(value["enabled"], true);
+    assert_eq!(value["checkout_clean"], false);
     assert!(value["active_run"].is_null());
 }
 
@@ -166,25 +167,35 @@ fn validates_and_resolves_project_config() {
 
 #[test]
 fn runs_worker_in_shared_checkout_by_default() {
-    run_worker_flow(false, false, false);
+    run_worker_flow(false, false, false, false);
 }
 
 #[test]
 fn runs_worker_in_configured_worktree() {
-    run_worker_flow(true, false, false);
+    run_worker_flow(true, false, false, false);
 }
 
 #[test]
 fn runs_worker_only_yolo_worktree() {
-    run_worker_flow(true, true, false);
+    run_worker_flow(true, true, false, false);
 }
 
 #[test]
 fn runs_every_agent_in_global_yolo() {
-    run_worker_flow(false, false, true);
+    run_worker_flow(false, false, true, false);
 }
 
-fn run_worker_flow(use_worktrees: bool, worker_yolo: bool, global_yolo: bool) {
+#[test]
+fn starts_dirty_but_blocks_workers_until_clean() {
+    run_worker_flow(true, false, false, true);
+}
+
+fn run_worker_flow(
+    use_worktrees: bool,
+    worker_yolo: bool,
+    global_yolo: bool,
+    dirty_at_start: bool,
+) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -227,6 +238,10 @@ fn run_worker_flow(use_worktrees: bool, worker_yolo: bool, global_yolo: bool) {
     fs::write(&config_path, config).unwrap();
     git(repo.path(), &["add", ".herdr/cadence.toml"]);
     git(repo.path(), &["commit", "-m", "enable cadence"]);
+    let dirty_path = repo.path().join("uncommitted.txt");
+    if dirty_at_start {
+        fs::write(&dirty_path, "uncommitted work\n").unwrap();
+    }
 
     let fake_dir = tempfile::tempdir().unwrap();
     let fake = fake_dir.path().join("herdr");
@@ -314,6 +329,8 @@ fi
         "{}",
         String::from_utf8_lossy(&start.stderr)
     );
+    let started: serde_json::Value = serde_json::from_slice(&start.stdout).unwrap();
+    assert_eq!(started["checkout_clean"], !dirty_at_start);
     let store: serde_json::Value =
         serde_json::from_slice(&fs::read(state.path().join("state.json")).unwrap()).unwrap();
     let project = store["projects"]
@@ -353,6 +370,38 @@ fi
         r#"{"title":"Add API","task":"Implement the API","scope":["src/api"],"acceptance":["Tests pass"],"role":"qa"}"#,
     )
     .unwrap();
+    if dirty_at_start {
+        let blocked = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "worker",
+                "spawn",
+                "--request-file",
+                request.to_str().unwrap(),
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .output()
+            .unwrap();
+        assert!(!blocked.status.success());
+        let error: serde_json::Value = serde_json::from_slice(&blocked.stderr).unwrap();
+        assert!(
+            error["error"]
+                .as_str()
+                .unwrap()
+                .contains("cannot spawn a Worker")
+        );
+        assert!(
+            error["causes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|cause| { cause.as_str().unwrap().contains("Git worktree is dirty") })
+        );
+        fs::remove_file(&dirty_path).unwrap();
+    }
     let spawn = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
         .args([
             "--state-dir",
@@ -409,6 +458,10 @@ fi
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
     assert!(calls.contains("Handle trivial, low-risk work directly"));
     assert!(calls.contains("Never directly edit a path reserved by an active Worker"));
+    assert_eq!(
+        calls.contains("The base checkout has uncommitted changes"),
+        dirty_at_start
+    );
     assert!(calls.contains("Completing a task or batch does not end the Cadence run"));
     assert!(calls.contains("only after the user explicitly asks to end the Cadence session"));
     assert!(calls.contains("use each spawn result's `display_name`"));

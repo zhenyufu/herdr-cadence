@@ -62,7 +62,7 @@ impl App {
 
     pub fn start(&self, workspace_id: &str) -> Result<Value> {
         let config = self.enabled_config()?;
-        git::ensure_clean(&self.root)?;
+        let checkout_clean = git::is_clean(&self.root)?;
         let branch = git::current_branch(&self.root)?;
         let key = project_key(&self.root);
 
@@ -161,15 +161,21 @@ impl App {
             self.set_run_error(&key, &run.id, &error.to_string())?;
             return Err(error.context("failed to start the Orchestrator"));
         }
-        let prompt =
-            prompts::orchestrator(&self.binary, self.state.dir(), &self.root, &run, &config);
+        let prompt = prompts::orchestrator(
+            &self.binary,
+            self.state.dir(),
+            &self.root,
+            &run,
+            &config,
+            checkout_clean,
+        );
         self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
         self.state.update(|store| {
             active_run_mut(store, &key)?.last_error = None;
             Ok(())
         })?;
         Ok(
-            json!({"status": "started", "run_id": run.id, "agent": run.orchestrator.name, "tab_id": terminal.tab_id, "pane_id": terminal.pane_id}),
+            json!({"status": "started", "run_id": run.id, "agent": run.orchestrator.name, "checkout_clean": checkout_clean, "tab_id": terminal.tab_id, "pane_id": terminal.pane_id}),
         )
     }
 
@@ -187,6 +193,7 @@ impl App {
         Ok(json!({
             "project": self.root,
             "enabled": config.enabled,
+            "checkout_clean": git::is_clean(&self.root)?,
             "active_run": run,
         }))
     }
@@ -226,9 +233,8 @@ impl App {
     pub fn spawn_worker(&self, request_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
         let use_worktree = config.use_git_worktrees;
-        if use_worktree {
-            git::ensure_clean(&self.root)?;
-        }
+        git::ensure_clean(&self.root)
+            .context("cannot spawn a Worker until the base checkout is committed or stashed")?;
         let request: WorkerRequest = serde_json::from_reader(
             fs::File::open(request_file)
                 .with_context(|| format!("cannot open {}", request_file.display()))?,
@@ -538,6 +544,7 @@ impl App {
             Ok(())
         })?;
         let result = (|| -> Result<()> {
+            git::ensure_clean(&self.root)?;
             ensure!(
                 git::current_branch(&self.root)? == run.base_branch,
                 "base checkout changed branches; expected {}",

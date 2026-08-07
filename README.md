@@ -24,6 +24,8 @@ herdr plugin action invoke herdr-cadence.start
 
 Cadence is globally installed but only acts in repositories with an enabled config. It never creates or changes `AGENTS.md`; role and task context is injected when each agent starts.
 
+The Orchestrator can start while the repository has uncommitted changes and may inspect or handle small work directly. Worker creation remains blocked until the base checkout is committed or stashed so every Worker receives a stable baseline; worktree integration also requires a clean base checkout.
+
 ## Codex approvals
 
 Codex may request permission when an agent runs the Cadence binary outside its project sandbox. At the first request, use Codex's option to always allow the suggested command prefix. To configure it manually, add this rule to `~/.codex/rules/default.rules`:

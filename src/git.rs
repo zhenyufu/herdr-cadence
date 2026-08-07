@@ -52,11 +52,14 @@ pub fn resolve_commit(root: &Path, revision: &str) -> Result<String> {
 }
 
 pub fn ensure_clean(root: &Path) -> Result<()> {
-    let status = checked(root, &["status", "--porcelain"])?;
-    if !status.is_empty() {
+    if !is_clean(root)? {
         bail!("Git worktree is dirty; commit or stash changes before continuing");
     }
     Ok(())
+}
+
+pub fn is_clean(root: &Path) -> Result<bool> {
+    Ok(checked(root, &["status", "--porcelain"])?.is_empty())
 }
 
 pub fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool> {

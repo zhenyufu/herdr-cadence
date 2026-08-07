@@ -9,6 +9,7 @@ pub fn orchestrator(
     project_root: &Path,
     run: &Run,
     config: &Config,
+    checkout_clean: bool,
 ) -> String {
     let workers = &config.workers;
     let max_parallel = config.max_parallel();
@@ -36,6 +37,11 @@ pub fn orchestrator(
     } else {
         ""
     };
+    let dirty_guidance = if checkout_clean {
+        ""
+    } else {
+        "The base checkout has uncommitted changes. You may inspect them or handle small work directly, but do not create Workers until all changes are committed or stashed; Cadence will reject Worker creation because Workers require a stable committed baseline."
+    };
     format!(
         r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. No user task is assigned yet. Do not inspect the repository, run commands, or create Workers until the user provides a task; reply briefly that Cadence is ready, then wait. Plan and coordinate implementation. Handle trivial, low-risk work directly when that is faster than coordinating a Worker, such as a quick inspection or small single-file edit. Delegate specialized, multi-step, broad, risky, or parallelizable work. Never directly edit a path reserved by an active Worker. {checkout_guidance}
 
@@ -47,6 +53,7 @@ Choose the role whose description best matches each task. Use `generalist` when 
 Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. {integration_guidance} Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no Workers remain active.
 
 {orchestrator_access}
+{dirty_guidance}
 In user-facing messages, use each spawn result's `display_name`, such as `[Researcher] Review the README`; do not call agents Worker 2 or worker-2. Use Worker IDs only in Cadence commands or when needed to disambiguate duplicate names. Do not invent task dependencies or let Workers delegate. Keep the user informed of assignments and integrated results."#,
         run_id = run.id,
         bin = binary.display(),
@@ -57,6 +64,7 @@ In user-facing messages, use each spawn result's `display_name`, such as `[Resea
         checkout_guidance = checkout_guidance,
         integration_guidance = integration_guidance,
         orchestrator_access = orchestrator_access,
+        dirty_guidance = dirty_guidance,
     )
 }
 
