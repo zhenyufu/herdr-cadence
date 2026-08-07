@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::config::{Config, GENERALIST_ROLE};
+use crate::config::{Config, GENERALIST_ROLE, Harness};
 use crate::git;
 use crate::herdr::Herdr;
 use crate::model::{
@@ -147,25 +147,20 @@ impl App {
             stored.orchestrator.pane_id = Some(terminal.pane_id.clone());
             Ok(())
         })?;
+        let agent_args = yolo_agent_args(run.orchestrator.harness, config.yolo);
         let launch = self.herdr.start_agent(
             &run.orchestrator.name,
             run.orchestrator.harness.as_str(),
             &terminal.pane_id,
             run.orchestrator.model.as_deref(),
+            &agent_args,
         );
         if let Err(error) = launch {
             self.set_run_error(&key, &run.id, &error.to_string())?;
             return Err(error.context("failed to start the Orchestrator"));
         }
-        let prompt = prompts::orchestrator(
-            &self.binary,
-            self.state.dir(),
-            &self.root,
-            &run,
-            &config.workers,
-            config.max_parallel(),
-            config.git.use_worktrees,
-        );
+        let prompt =
+            prompts::orchestrator(&self.binary, self.state.dir(), &self.root, &run, &config);
         self.herdr.prompt_agent(&run.orchestrator.name, &prompt)?;
         self.state.update(|store| {
             active_run_mut(store, &key)?.last_error = None;
@@ -274,6 +269,7 @@ impl App {
                 role_description: role_description.clone(),
                 harness,
                 model,
+                yolo: config.yolo || config.workers.yolo_with_worktrees_only,
                 use_worktree,
                 branch,
                 base_sha: base_sha.clone(),
@@ -323,11 +319,13 @@ impl App {
             stored.checkout_path = terminal.checkout_path.clone();
             Ok(())
         })?;
+        let agent_args = worker_agent_args(&worker, self.state.dir());
         if let Err(error) = self.herdr.start_agent(
             &worker.agent_name,
             worker.harness.as_str(),
             &terminal.pane_id,
             worker.model.as_deref(),
+            &agent_args,
         ) {
             self.fail_worker(&key, &worker.id, &error.to_string())?;
             return Err(error.context("failed to start Worker agent"));
@@ -464,7 +462,15 @@ impl App {
                 report.commit_sha = Some(worker_head);
                 report.changed_paths = changed_paths;
                 self.store_report(&key, worker_id, report, WorkerStatus::Completed)?;
-                if config.git.auto_integrate {
+                if worker.use_worktree {
+                    self.notify(
+                        &key,
+                        &format!(
+                            "{display_name} completed (internal ID: {worker_id}). Review its report, then run `worker integrate {worker_id}` to accept the isolated commit."
+                        ),
+                    );
+                    self.worker_status(worker_id)
+                } else if config.git.auto_integrate {
                     self.integrate_worker(worker_id)
                 } else {
                     self.worker_status(worker_id)
@@ -532,20 +538,36 @@ impl App {
                     Ok(())
                 })?;
                 let message = if worker.use_worktree {
-                    format!(
-                        "{} integrated successfully (internal ID: {worker_id}). Review its report; its worktree will be cleaned up after exit.",
-                        worker_display_name(&worker)
-                    )
+                    if config.git.cleanup_on_success {
+                        format!(
+                            "{} integrated successfully (internal ID: {worker_id}); its agent and worktree were cleaned up.",
+                            worker_display_name(&worker)
+                        )
+                    } else {
+                        format!(
+                            "{} integrated successfully (internal ID: {worker_id}); its agent and worktree were retained by configuration.",
+                            worker_display_name(&worker)
+                        )
+                    }
                 } else {
                     format!(
                         "{} completed successfully on the shared base branch (internal ID: {worker_id}).",
                         worker_display_name(&worker)
                     )
                 };
-                self.notify(&key, &message);
-                if config.git.cleanup_on_success && !self.herdr.agent_exists(&worker.agent_name) {
+                if worker.use_worktree {
+                    if config.git.cleanup_on_success {
+                        if self.herdr.agent_exists(&worker.agent_name) {
+                            let _ = self.herdr.send_ctrl_c(&worker.agent_name);
+                        }
+                        self.cleanup_worker(&key, worker_id)?;
+                    }
+                } else if config.git.cleanup_on_success
+                    && !self.herdr.agent_exists(&worker.agent_name)
+                {
                     self.cleanup_worker(&key, worker_id)?;
                 }
+                self.notify(&key, &message);
                 self.worker_status(worker_id)
             }
             Err(error) => {
@@ -596,6 +618,7 @@ impl App {
     }
 
     pub fn finish_run(&self) -> Result<Value> {
+        let config = self.enabled_config()?;
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
         if let Some(worker) = run.workers.values().find(|w| !w.status.is_terminal()) {
@@ -605,11 +628,14 @@ impl App {
                 worker.status
             );
         }
-        if let Some(worker) = run.workers.values().find(|w| {
-            w.status == WorkerStatus::Integrated && (w.workspace_id.is_some() || w.tab_id.is_some())
-        }) {
+        if config.git.cleanup_on_success
+            && let Some(worker) = run.workers.values().find(|w| {
+                w.status == WorkerStatus::Integrated
+                    && (w.workspace_id.is_some() || w.tab_id.is_some())
+            })
+        {
             bail!(
-                "Worker {} is integrated but still running; let it exit so Cadence can clean its resources",
+                "Worker {} is integrated but its resources have not been cleaned up",
                 worker.id
             );
         }
@@ -969,6 +995,36 @@ fn slug(value: &str, max: usize) -> String {
 
 fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
+}
+
+fn worker_agent_args(worker: &Worker, state_dir: &Path) -> Vec<String> {
+    if worker.yolo {
+        return yolo_agent_args(worker.harness, true);
+    }
+    if !worker.use_worktree {
+        return Vec::new();
+    }
+    match worker.harness {
+        Harness::Codex => vec![
+            "--sandbox".into(),
+            "workspace-write".into(),
+            "--ask-for-approval".into(),
+            "never".into(),
+            "--add-dir".into(),
+            state_dir.display().to_string(),
+        ],
+        Harness::Opencode => Vec::new(),
+    }
+}
+
+fn yolo_agent_args(harness: Harness, yolo: bool) -> Vec<String> {
+    if !yolo {
+        return Vec::new();
+    }
+    match harness {
+        Harness::Codex => vec!["--dangerously-bypass-approvals-and-sandbox".into()],
+        Harness::Opencode => vec!["--auto".into()],
+    }
 }
 
 fn display_role(role: &str) -> String {

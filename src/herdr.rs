@@ -195,6 +195,7 @@ impl Herdr {
         harness: &str,
         pane_id: &str,
         model: Option<&str>,
+        agent_args: &[String],
     ) -> Result<()> {
         self.wait_for_available_shell(pane_id)?;
         let mut args = vec![
@@ -208,9 +209,13 @@ impl Herdr {
             "--timeout".into(),
             "120000".into(),
         ];
-        if let Some(model) = model {
-            args.extend(["--".into(), "--model".into(), model.into()]);
+        if model.is_some() || !agent_args.is_empty() {
+            args.push("--".into());
         }
+        if let Some(model) = model {
+            args.extend(["--model".into(), model.into()]);
+        }
+        args.extend(agent_args.iter().cloned());
         for delay in AGENT_PANE_BUSY_RETRY_DELAYS {
             let output = self.output(&args)?;
             if output.status.success() {
@@ -243,7 +248,7 @@ impl Herdr {
     }
 
     pub fn remove_worktree(&self, workspace_id: &str) -> Result<()> {
-        self.checked(["worktree", "remove", "--workspace", workspace_id])?;
+        self.checked(["worktree", "remove", "--workspace", workspace_id, "--force"])?;
         Ok(())
     }
 

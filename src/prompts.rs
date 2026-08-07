@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::config::WorkerConfig;
+use crate::config::Config;
 use crate::model::{Run, Worker};
 
 pub fn orchestrator(
@@ -8,15 +8,33 @@ pub fn orchestrator(
     state_dir: &Path,
     project_root: &Path,
     run: &Run,
-    workers: &WorkerConfig,
-    max_parallel: usize,
-    use_worktrees: bool,
+    config: &Config,
 ) -> String {
+    let workers = &config.workers;
+    let max_parallel = config.max_parallel();
+    let use_worktrees = config.git.use_worktrees;
+    let global_yolo = config.yolo;
     let roles = workers.role_catalog();
     let checkout_guidance = if use_worktrees {
-        "Workers run in isolated Herdr worktrees."
+        if global_yolo || workers.yolo_with_worktrees_only {
+            "Workers run in isolated Herdr worktrees with YOLO full host access. Keep them strictly within their assigned scope."
+        } else {
+            "Workers run autonomously in isolated Herdr worktrees. Codex Workers can write only their worktree and Cadence state; unavailable external actions fail instead of asking the user."
+        }
+    } else if global_yolo {
+        "Workers share the base checkout with global YOLO full host access. Keep their path scopes non-overlapping and strictly bounded."
     } else {
         "Workers run in separate tabs but share the base checkout. Keep their path scopes non-overlapping."
+    };
+    let integration_guidance = if use_worktrees {
+        "When a Worker completes, inspect its report and acceptance evidence first, request a focused follow-up if needed, then run `worker integrate <id>` to accept its commit. Handle routine verification yourself; involve the user only for material scope, destructive actions, or retained conflicts."
+    } else {
+        "Cadence integrates clean commits automatically when configured."
+    };
+    let orchestrator_access = if global_yolo {
+        "Global YOLO is enabled for you and every Worker. Full access removes permission prompts but does not authorize destructive, irreversible, security-sensitive, or out-of-scope actions."
+    } else {
+        ""
     };
     format!(
         r#"You are the Orchestrator for Cadence run {run_id}. The user talks only to you. No user task is assigned yet. Do not inspect the repository, run commands, or create Workers until the user provides a task; reply briefly that Cadence is ready, then wait. Plan and coordinate implementation; delegate bounded implementation tasks to Workers instead of doing those tasks yourself. {checkout_guidance}
@@ -26,8 +44,9 @@ Available Worker roles:
 
 Choose the role whose description best matches each task. Use `generalist` when no specialized role is a good match. Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. Create a JSON request with title, task, scope, acceptance, and role, then run:
   {bin} --state-dir {state} --project-root {root} worker spawn --request-file <path>
-Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. Cadence integrates clean commits automatically. Resolve retained failures/conflicts with the user. When no Workers are active and the orchestration is finished, run `run finish` with the same global flags.
+Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. {integration_guidance} Resolve retained failures/conflicts with the user. When no Workers are active and the orchestration is finished, run `run finish` with the same global flags.
 
+{orchestrator_access}
 In user-facing messages, use each spawn result's `display_name`, such as `[Researcher] Review the README`; do not call agents Worker 2 or worker-2. Use Worker IDs only in Cadence commands or when needed to disambiguate duplicate names. Do not invent task dependencies or let Workers delegate. Keep the user informed of assignments and integrated results."#,
         run_id = run.id,
         bin = binary.display(),
@@ -36,6 +55,8 @@ In user-facing messages, use each spawn result's `display_name`, such as `[Resea
         roles = roles,
         max = max_parallel,
         checkout_guidance = checkout_guidance,
+        integration_guidance = integration_guidance,
+        orchestrator_access = orchestrator_access,
     )
 }
 
@@ -63,6 +84,17 @@ pub fn worker(
     } else {
         "You share the base checkout with other Workers. Stage only paths in your allowed scope, create exactly one commit for this task, and include its commit_sha in the report."
     };
+    let permission_guidance = match (worker.harness, worker.use_worktree, worker.yolo) {
+        (crate::config::Harness::Codex, true, false) => {
+            "You run autonomously with workspace-write sandboxing and no approval prompts. If an action outside the available sandbox is required, do not ask the user; report the limitation so the Orchestrator can handle it."
+        }
+        (_, _, true) => {
+            "YOLO full access is enabled. Do not treat it as permission to broaden scope or perform destructive, irreversible, or security-sensitive actions."
+        }
+        _ => {
+            "Do not ask the user to approve routine edits or verification; report a genuine access blocker to the Orchestrator."
+        }
+    };
     format!(
         r#"You are a Cadence Worker in run {run_id}. Complete exactly this one task; do not delegate or broaden scope.
 
@@ -74,10 +106,10 @@ Allowed scope:
 Acceptance criteria:
 {acceptance}
 
-Follow repository instructions. Modify only the allowed scope and run relevant tests. {git_guidance} Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
+Follow repository instructions. Modify only the allowed scope and run relevant tests. {permission_guidance} {git_guidance} Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
   {bin} --state-dir {state} --project-root {root} worker complete {worker_id} --report-file <path>
 
-If completion returns integrated, exit the agent. If blocked, remain available for an Orchestrator follow-up."#,
+If completion returns integrated, exit the agent. If it returns completed, remain available while the Orchestrator reviews your report, then exit when Cadence says the commit was accepted. If blocked, remain available for an Orchestrator follow-up."#,
         task = worker.task,
         role = worker.role,
         role_description = worker.role_description,
@@ -85,6 +117,7 @@ If completion returns integrated, exit the agent. If blocked, remain available f
         scope = scope,
         acceptance = acceptance,
         git_guidance = git_guidance,
+        permission_guidance = permission_guidance,
         bin = binary.display(),
         state = state_dir.display(),
         root = project_root.display(),

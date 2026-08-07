@@ -59,6 +59,8 @@ pub struct Worker {
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default)]
+    pub yolo: bool,
     #[serde(default = "worktree_enabled")]
     pub use_worktree: bool,
     pub branch: String,
@@ -313,5 +315,6 @@ mod tests {
         .unwrap();
 
         assert!(worker.use_worktree);
+        assert!(!worker.yolo);
     }
 }

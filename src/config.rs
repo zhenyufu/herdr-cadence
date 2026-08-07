@@ -13,6 +13,8 @@ pub const GENERALIST_ROLE: &str = "generalist";
 pub struct Config {
     pub schema_version: u32,
     pub enabled: bool,
+    #[serde(default)]
+    pub yolo: bool,
     pub orchestrator: AgentConfig,
     pub workers: WorkerConfig,
     pub git: GitConfig,
@@ -34,6 +36,8 @@ pub struct WorkerConfig {
     pub harness: WorkerHarness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default)]
+    pub yolo_with_worktrees_only: bool,
     #[serde(default = "default_generalist_description")]
     pub generalist_description: String,
     // Accepted for schema v1 compatibility; new configs place this under orchestrator.
@@ -100,6 +104,7 @@ impl Default for Config {
         Self {
             schema_version: 1,
             enabled: true,
+            yolo: false,
             orchestrator: AgentConfig {
                 harness: Harness::Codex,
                 model: None,
@@ -108,6 +113,7 @@ impl Default for Config {
             workers: WorkerConfig {
                 harness: WorkerHarness::Inherit,
                 model: None,
+                yolo_with_worktrees_only: false,
                 generalist_description: default_generalist_description(),
                 max_parallel: None,
                 roles: BTreeMap::new(),
@@ -177,6 +183,9 @@ impl Config {
         }
         if !(1..=16).contains(&self.max_parallel()) {
             bail!("orchestrator.max_parallel must be between 1 and 16");
+        }
+        if self.workers.yolo_with_worktrees_only && !self.git.use_worktrees {
+            bail!("workers.yolo_with_worktrees_only requires git.use_worktrees = true");
         }
         validate_model(self.orchestrator.model.as_deref())?;
         validate_role(
@@ -264,8 +273,10 @@ mod tests {
         let parsed: Config = toml::from_str(&raw).unwrap();
         assert_eq!(parsed, Config::default());
         assert!(raw.contains("max_parallel = 4"));
+        assert!(!parsed.yolo);
         assert_eq!(parsed.orchestrator.max_parallel, Some(4));
         assert_eq!(parsed.workers.max_parallel, None);
+        assert!(!parsed.workers.yolo_with_worktrees_only);
         assert!(!parsed.git.use_worktrees);
     }
 
@@ -274,6 +285,21 @@ mod tests {
         let mut config = Config::default();
         config.orchestrator.max_parallel = Some(0);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn requires_worktrees_for_yolo_workers() {
+        let mut config = Config::default();
+        config.workers.yolo_with_worktrees_only = true;
+        assert!(config.validate().is_err());
+
+        config.git.use_worktrees = true;
+        assert!(config.validate().is_ok());
+
+        config.git.use_worktrees = false;
+        config.workers.yolo_with_worktrees_only = false;
+        config.yolo = true;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -344,8 +370,10 @@ cleanup_on_success = true
 "#;
 
         let config: Config = toml::from_str(raw).unwrap();
+        assert!(!config.yolo);
         assert_eq!(config.orchestrator.max_parallel, None);
         assert_eq!(config.max_parallel(), 4);
+        assert!(!config.workers.yolo_with_worktrees_only);
         assert_eq!(
             config.workers.generalist_description,
             default_generalist_description()

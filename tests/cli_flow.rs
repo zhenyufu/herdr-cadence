@@ -80,6 +80,8 @@ fn enables_and_reports_project_status() {
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
     assert_eq!(parsed.orchestrator.max_parallel, Some(4));
     assert_eq!(parsed.workers.max_parallel, None);
+    assert!(!parsed.yolo);
+    assert!(!parsed.workers.yolo_with_worktrees_only);
     assert!(!parsed.git.use_worktrees);
     assert!(!repo.path().join("AGENTS.md").exists());
 
@@ -92,15 +94,25 @@ fn enables_and_reports_project_status() {
 
 #[test]
 fn runs_worker_in_shared_checkout_by_default() {
-    run_worker_flow(false);
+    run_worker_flow(false, false, false);
 }
 
 #[test]
 fn runs_worker_in_configured_worktree() {
-    run_worker_flow(true);
+    run_worker_flow(true, false, false);
 }
 
-fn run_worker_flow(use_worktrees: bool) {
+#[test]
+fn runs_worker_only_yolo_worktree() {
+    run_worker_flow(true, true, false);
+}
+
+#[test]
+fn runs_every_agent_in_global_yolo() {
+    run_worker_flow(false, false, true);
+}
+
+fn run_worker_flow(use_worktrees: bool, worker_yolo: bool, global_yolo: bool) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -124,8 +136,17 @@ fn run_worker_flow(use_worktrees: bool) {
     if use_worktrees {
         config = config.replace("use_worktrees = false", "use_worktrees = true");
     }
+    if global_yolo {
+        config = config.replacen("yolo = false", "yolo = true", 1);
+    }
+    if worker_yolo {
+        config = config.replace(
+            "model = \"worker-model\"\nyolo_with_worktrees_only = false",
+            "model = \"worker-model\"\nyolo_with_worktrees_only = true",
+        );
+    }
     config.push_str(
-        "\n[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"opencode\"\nmodel = \"qa-model\"\n",
+        "\n[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\n",
     );
     toml::from_str::<herdr_cadence::config::Config>(&config).unwrap();
     fs::write(&config_path, config).unwrap();
@@ -142,7 +163,17 @@ fn run_worker_flow(use_worktrees: bool) {
     let script = format!(
         r#"#!/bin/sh
 printf '%s\n' "$*" >> '{}'
-if [ "$1 $2" = "agent get" ]; then exit 1; fi
+if [ "$1 $2" = "agent get" ]; then
+  case "$3" in
+    cadence-*-w*)
+      if [ "$CADENCE_TEST_WORKTREE" = "1" ]; then
+        printf '%s\n' '{{"id":"test","result":{{}}}}'
+        exit 0
+      fi
+      ;;
+  esac
+  exit 1
+fi
 if [ "$1 $2" = "pane process-info" ]; then
   if [ ! -e '{}' ]; then
     : > '{}'
@@ -303,9 +334,15 @@ fi
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
     assert!(calls.contains("use each spawn result's `display_name`"));
     assert!(calls.contains("do not call agents Worker 2 or worker-2"));
-    assert!(calls.contains(
-        "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model"
-    ));
+    let orchestrator_launch =
+        "--kind opencode --pane pane-orch --timeout 120000 -- --model orchestrator-model";
+    assert!(calls.contains(orchestrator_launch));
+    if global_yolo {
+        assert!(calls.contains(&format!("{orchestrator_launch} --auto")));
+        assert!(calls.contains("Global YOLO is enabled for you and every Worker"));
+    } else {
+        assert!(!calls.contains(&format!("{orchestrator_launch} --auto")));
+    }
     if use_worktrees {
         assert!(calls.contains("workspace get orch-ws"));
         assert!(calls.contains("tab create --workspace orch-ws"));
@@ -315,7 +352,7 @@ fi
             repo.path().canonicalize().unwrap().display()
         )));
         assert!(!calls.contains("worktree create --workspace"));
-        assert!(calls.contains("Workers run in isolated Herdr worktrees"));
+        assert!(calls.contains("isolated Herdr worktrees"));
     } else {
         assert!(!calls.contains("worktree create --cwd"));
         assert!(calls.contains("tab create --workspace orch-ws"));
@@ -324,9 +361,23 @@ fi
         assert!(calls.contains("create exactly one commit for this task"));
     }
     assert!(calls.contains("agent start cadence-"));
-    assert!(
-        calls.contains("--kind opencode --pane pane-worker --timeout 120000 -- --model qa-model")
-    );
+    let worker_launch = "--kind codex --pane pane-worker --timeout 120000 -- --model qa-model";
+    assert!(calls.contains(worker_launch));
+    let effective_worker_yolo = worker_yolo || global_yolo;
+    if effective_worker_yolo {
+        assert!(calls.contains(&format!(
+            "{worker_launch} --dangerously-bypass-approvals-and-sandbox"
+        )));
+    } else if use_worktrees {
+        assert!(calls.contains(&format!(
+            "{worker_launch} --sandbox workspace-write --ask-for-approval never --add-dir {}",
+            state.path().display()
+        )));
+        assert!(calls.contains("If an action outside the available sandbox is required"));
+    } else {
+        assert!(!calls.contains("--ask-for-approval never"));
+        assert!(!calls.contains("--dangerously-bypass-approvals-and-sandbox"));
+    }
     assert!(calls.contains("Role: qa"));
     assert!(calls.contains("Role guidance: Use for test validation"));
     assert!(calls.contains("agent prompt"));
@@ -383,16 +434,49 @@ fi
         "{}",
         String::from_utf8_lossy(&complete.stderr)
     );
-    let completed: serde_json::Value = serde_json::from_slice(&complete.stdout).unwrap();
-    assert_eq!(completed["status"], "integrated");
+    let mut completed: serde_json::Value = serde_json::from_slice(&complete.stdout).unwrap();
+    assert_eq!(
+        completed["status"],
+        if use_worktrees {
+            "completed"
+        } else {
+            "integrated"
+        }
+    );
     assert_eq!(completed["report"]["changed_paths"][0], "src/api/mod.rs");
+    if use_worktrees {
+        assert!(!repo.path().join("src/api/mod.rs").exists());
+        let integrate = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "worker",
+                "integrate",
+                "worker-1",
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CADENCE_TEST_WORKTREE", "1")
+            .output()
+            .unwrap();
+        assert!(
+            integrate.status.success(),
+            "{}",
+            String::from_utf8_lossy(&integrate.stderr)
+        );
+        completed = serde_json::from_slice(&integrate.stdout).unwrap();
+        assert_eq!(completed["status"], "integrated");
+    }
     assert_eq!(
         fs::read_to_string(repo.path().join("src/api/mod.rs")).unwrap(),
         "pub fn ready() {}\n"
     );
     let calls = fs::read_to_string(&log).unwrap();
     if use_worktrees {
-        assert!(calls.contains("worktree remove --workspace worker-ws"));
+        assert!(calls.contains("agent send-keys cadence-"));
+        assert!(calls.contains("ctrl+c"));
+        assert!(calls.contains("worktree remove --workspace worker-ws --force"));
     } else {
         assert!(calls.contains("tab close tab-worker"));
     }

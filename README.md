@@ -43,6 +43,7 @@ Replace `<cadence-bin>` and `<cadence-state-dir>` with the absolute values shown
 ```toml
 schema_version = 1
 enabled = true
+yolo = false # full access for the Orchestrator and every Worker
 
 [orchestrator]
 harness = "codex" # or "opencode"
@@ -52,6 +53,7 @@ max_parallel = 4
 [workers]
 harness = "inherit" # or "codex" / "opencode"
 # model = "your-model-id" # optional; omit to use the harness default
+yolo_with_worktrees_only = false # full access for isolated Workers only
 generalist_description = "Use for general implementation tasks that do not match a specialized role"
 
 [workers.roles.research]
@@ -74,7 +76,9 @@ The top-level `[workers]` harness and model define the `generalist` fallback. Th
 
 For compatibility, Cadence still accepts `max_parallel` under `[workers]` in existing schema-version-1 configs, but it cannot be set in both sections. Workers use the shared project checkout by default; set `git.use_worktrees = true` for isolated branches and checkouts.
 
-Successful Workers must commit clean work. In shared-checkout mode, each Worker commits only its reserved scope directly on the base branch. In worktree mode, Cadence cherry-picks completed commits and cleans successful worktrees after their agents exit. Failed, cancelled, or conflicting worktrees are retained for inspection; failed cherry-picks are aborted automatically.
+Isolated Codex Workers run autonomously with `workspace-write` sandboxing and no approval prompts. They can write their worktree and Cadence state; unavailable external operations fail for the Worker to report to the Orchestrator. Top-level `yolo = true` is an unrestricted global override for the Orchestrator and every Worker and does not require worktrees. For full-access Workers with a normally supervised Orchestrator, set `workers.yolo_with_worktrees_only = true`; this Worker-only mode requires worktrees. Both modes pass Codex's dangerous approval-and-sandbox bypass (or OpenCode auto-approval) to the affected agents. Worktrees isolate Git changes, not host access.
+
+Successful Workers must commit clean work. In shared-checkout mode, each Worker commits only its reserved scope directly on the base branch. In worktree mode, the Orchestrator reviews each completed report before invoking integration; Cadence then cherry-picks the accepted commits, terminates that Worker, and removes its worktree when `cleanup_on_success = true`. `git.auto_integrate` applies only to shared-checkout Workers. Completed worktrees remain available until review, while failed, cancelled, or conflicting worktrees are retained for inspection; failed cherry-picks are aborted automatically.
 
 ## Injected context
 
