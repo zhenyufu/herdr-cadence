@@ -95,6 +95,7 @@ impl App {
                     name,
                     harness: config.orchestrator.harness,
                     model: config.orchestrator.model.clone(),
+                    reasoning_effort: config.orchestrator.reasoning_effort,
                     workspace_id: None,
                     tab_id: None,
                     pane_id: None,
@@ -150,9 +151,10 @@ impl App {
         let agent_args = yolo_agent_args(run.orchestrator.harness, config.yolo);
         let launch = self.herdr.start_agent(
             &run.orchestrator.name,
-            run.orchestrator.harness.as_str(),
+            run.orchestrator.harness,
             &terminal.pane_id,
             run.orchestrator.model.as_deref(),
+            run.orchestrator.reasoning_effort,
             &agent_args,
         );
         if let Err(error) = launch {
@@ -191,7 +193,7 @@ impl App {
 
     pub fn spawn_worker(&self, request_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
-        let use_worktree = config.git.use_worktrees;
+        let use_worktree = config.use_git_worktrees;
         if use_worktree {
             git::ensure_clean(&self.root)?;
         }
@@ -201,7 +203,8 @@ impl App {
         )?;
         let request = request.validate_and_normalize()?;
         let role_name = request.role.as_deref().unwrap_or(GENERALIST_ROLE);
-        let (role_description, role_harness, role_model) = config.workers.role(Some(role_name))?;
+        let (role_description, role_harness, role_model, role_reasoning_effort) =
+            config.workers.role(Some(role_name))?;
         let role_name = role_name.to_string();
         let role_description = role_description.to_string();
         let role_model = role_model.map(str::to_string);
@@ -248,6 +251,7 @@ impl App {
                 .harness
                 .unwrap_or_else(|| role_harness.resolve(config.orchestrator.harness));
             let model = request.model.clone().or_else(|| role_model.clone());
+            let reasoning_effort = request.reasoning_effort.unwrap_or(role_reasoning_effort);
             let title_slug = slug(&request.title, 20);
             let title_slug = if title_slug.is_empty() {
                 "task".to_string()
@@ -269,6 +273,7 @@ impl App {
                 role_description: role_description.clone(),
                 harness,
                 model,
+                reasoning_effort,
                 yolo: config.yolo || config.workers.yolo_with_worktrees_only,
                 use_worktree,
                 branch,
@@ -322,9 +327,10 @@ impl App {
         let agent_args = worker_agent_args(&worker, self.state.dir());
         if let Err(error) = self.herdr.start_agent(
             &worker.agent_name,
-            worker.harness.as_str(),
+            worker.harness,
             &terminal.pane_id,
             worker.model.as_deref(),
+            worker.reasoning_effort,
             &agent_args,
         ) {
             self.fail_worker(&key, &worker.id, &error.to_string())?;
@@ -338,7 +344,7 @@ impl App {
         })?;
         let display_name = worker_display_name(&worker);
         Ok(
-            json!({"status": "working", "worker_id": worker.id, "display_name": display_name, "role": worker.role, "agent": worker.agent_name, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
+            json!({"status": "working", "worker_id": worker.id, "display_name": display_name, "role": worker.role, "agent": worker.agent_name, "model": worker.model, "reasoning_effort": worker.reasoning_effort, "branch": worker.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
         )
     }
 
@@ -549,22 +555,21 @@ impl App {
                             worker_display_name(&worker)
                         )
                     }
+                } else if config.git.cleanup_on_success {
+                    format!(
+                        "{} completed successfully on the shared base branch (internal ID: {worker_id}); its agent and tab were cleaned up.",
+                        worker_display_name(&worker)
+                    )
                 } else {
                     format!(
-                        "{} completed successfully on the shared base branch (internal ID: {worker_id}).",
+                        "{} completed successfully on the shared base branch (internal ID: {worker_id}); its agent and tab were retained by configuration.",
                         worker_display_name(&worker)
                     )
                 };
-                if worker.use_worktree {
-                    if config.git.cleanup_on_success {
-                        if self.herdr.agent_exists(&worker.agent_name) {
-                            let _ = self.herdr.send_ctrl_c(&worker.agent_name);
-                        }
-                        self.cleanup_worker(&key, worker_id)?;
+                if config.git.cleanup_on_success {
+                    if self.herdr.agent_exists(&worker.agent_name) {
+                        let _ = self.herdr.send_ctrl_c(&worker.agent_name);
                     }
-                } else if config.git.cleanup_on_success
-                    && !self.herdr.agent_exists(&worker.agent_name)
-                {
                     self.cleanup_worker(&key, worker_id)?;
                 }
                 self.notify(&key, &message);

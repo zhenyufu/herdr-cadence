@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::Harness;
+use crate::config::{Harness, ReasoningEffort};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Store {
@@ -37,6 +37,8 @@ pub struct AgentRef {
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,6 +61,8 @@ pub struct Worker {
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
     #[serde(default)]
     pub yolo: bool,
     #[serde(default = "worktree_enabled")]
@@ -134,6 +138,8 @@ pub struct WorkerRequest {
     pub harness: Option<Harness>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,5 +322,6 @@ mod tests {
 
         assert!(worker.use_worktree);
         assert!(!worker.yolo);
+        assert_eq!(worker.reasoning_effort, ReasoningEffort::Default);
     }
 }

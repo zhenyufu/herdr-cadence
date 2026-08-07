@@ -15,9 +15,11 @@ pub struct Config {
     pub enabled: bool,
     #[serde(default)]
     pub yolo: bool,
+    #[serde(default)]
+    pub use_git_worktrees: bool,
     pub orchestrator: AgentConfig,
-    pub workers: WorkerConfig,
     pub git: GitConfig,
+    pub workers: WorkerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,6 +28,8 @@ pub struct AgentConfig {
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_parallel: Option<usize>,
 }
@@ -36,6 +40,8 @@ pub struct WorkerConfig {
     pub harness: WorkerHarness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
     #[serde(default)]
     pub yolo_with_worktrees_only: bool,
     #[serde(default = "default_generalist_description")]
@@ -54,13 +60,13 @@ pub struct RoleConfig {
     pub harness: WorkerHarness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GitConfig {
-    #[serde(default)]
-    pub use_worktrees: bool,
     pub auto_integrate: bool,
     pub cleanup_on_success: bool,
 }
@@ -70,6 +76,27 @@ pub struct GitConfig {
 pub enum Harness {
     Codex,
     Opencode,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    #[default]
+    Default,
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub fn as_str(self) -> Option<&'static str> {
+        match self {
+            Self::Default => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+        }
+    }
 }
 
 impl Harness {
@@ -105,23 +132,25 @@ impl Default for Config {
             schema_version: 1,
             enabled: true,
             yolo: false,
+            use_git_worktrees: false,
             orchestrator: AgentConfig {
                 harness: Harness::Codex,
-                model: None,
+                model: Some("gpt-5.6-sol".into()),
+                reasoning_effort: ReasoningEffort::High,
                 max_parallel: Some(4),
+            },
+            git: GitConfig {
+                auto_integrate: true,
+                cleanup_on_success: true,
             },
             workers: WorkerConfig {
                 harness: WorkerHarness::Inherit,
                 model: None,
+                reasoning_effort: ReasoningEffort::Default,
                 yolo_with_worktrees_only: false,
                 generalist_description: default_generalist_description(),
                 max_parallel: None,
-                roles: BTreeMap::new(),
-            },
-            git: GitConfig {
-                use_worktrees: false,
-                auto_integrate: true,
-                cleanup_on_success: true,
+                roles: default_roles(),
             },
         }
     }
@@ -150,19 +179,10 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let raw = toml::to_string_pretty(&Self::default())?
-            .replacen(
-                "harness = \"codex\"\n",
-                "harness = \"codex\"\n# model = \"your-model-id\"\n",
-                1,
-            )
-            .replacen(
-                "harness = \"inherit\"\n",
-                "harness = \"inherit\"\n# model = \"your-model-id\"\n",
-                1,
-            );
-        let raw = format!(
-            "{raw}\n# Add specialized roles as needed.\n# [workers.roles.research]\n# description = \"Use for investigation and evidence gathering\"\n# harness = \"inherit\"\n# model = \"your-model-id\"\n"
+        let raw = toml::to_string_pretty(&Self::default())?.replacen(
+            "harness = \"inherit\"\n",
+            "harness = \"inherit\"\n# model = \"your-model-id\"\n",
+            1,
         );
         fs::write(&path, raw)?;
         Ok(path)
@@ -184,14 +204,26 @@ impl Config {
         if !(1..=16).contains(&self.max_parallel()) {
             bail!("orchestrator.max_parallel must be between 1 and 16");
         }
-        if self.workers.yolo_with_worktrees_only && !self.git.use_worktrees {
-            bail!("workers.yolo_with_worktrees_only requires git.use_worktrees = true");
+        if self.workers.yolo_with_worktrees_only && !self.use_git_worktrees {
+            bail!("workers.yolo_with_worktrees_only requires use_git_worktrees = true");
         }
         validate_model(self.orchestrator.model.as_deref())?;
+        validate_reasoning_effort(
+            "orchestrator",
+            self.orchestrator.harness,
+            self.orchestrator.model.as_deref(),
+            self.orchestrator.reasoning_effort,
+        )?;
         validate_role(
             GENERALIST_ROLE,
             &self.workers.generalist_description,
             self.workers.model.as_deref(),
+        )?;
+        validate_reasoning_effort(
+            "workers",
+            self.workers.harness.resolve(self.orchestrator.harness),
+            self.workers.model.as_deref(),
+            self.workers.reasoning_effort,
         )?;
         for (name, role) in &self.workers.roles {
             if name == GENERALIST_ROLE {
@@ -203,6 +235,13 @@ impl Config {
                 bail!("worker role names cannot be empty or have surrounding whitespace");
             }
             validate_role(name, &role.description, role.model.as_deref())?;
+            validate_reasoning_effort(
+                &format!("workers.roles.{name}"),
+                role.harness.resolve(self.orchestrator.harness),
+                role.model.as_deref(),
+                role.reasoning_effort
+                    .unwrap_or(self.workers.reasoning_effort),
+            )?;
         }
         Ok(())
     }
@@ -216,20 +255,29 @@ impl Config {
 }
 
 impl WorkerConfig {
-    pub fn role(&self, name: Option<&str>) -> Result<(&str, WorkerHarness, Option<&str>)> {
+    pub fn role(
+        &self,
+        name: Option<&str>,
+    ) -> Result<(&str, WorkerHarness, Option<&str>, ReasoningEffort)> {
         let name = name.unwrap_or(GENERALIST_ROLE);
         if name == GENERALIST_ROLE {
             return Ok((
                 &self.generalist_description,
                 self.harness,
                 self.model.as_deref(),
+                self.reasoning_effort,
             ));
         }
         let role = self
             .roles
             .get(name)
             .with_context(|| format!("unknown Worker role {name:?}"))?;
-        Ok((&role.description, role.harness, role.model.as_deref()))
+        Ok((
+            &role.description,
+            role.harness,
+            role.model.as_deref(),
+            role.reasoning_effort.unwrap_or(self.reasoning_effort),
+        ))
     }
 
     pub fn role_catalog(&self) -> String {
@@ -249,6 +297,32 @@ fn default_generalist_description() -> String {
     "Use for general implementation tasks that do not match a specialized role".into()
 }
 
+fn default_roles() -> BTreeMap<String, RoleConfig> {
+    [
+        (
+            "research".into(),
+            RoleConfig {
+                description: "Use for investigation and evidence gathering".into(),
+                harness: WorkerHarness::Inherit,
+                model: None,
+                reasoning_effort: None,
+            },
+        ),
+        (
+            "qa".into(),
+            RoleConfig {
+                description: "Use for test planning, validation, and regression investigation"
+                    .into(),
+                harness: WorkerHarness::Inherit,
+                model: None,
+                reasoning_effort: None,
+            },
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
 fn validate_role(name: &str, description: &str, model: Option<&str>) -> Result<()> {
     if description.trim().is_empty() {
         bail!("worker role {name:?} description cannot be empty");
@@ -259,6 +333,23 @@ fn validate_role(name: &str, description: &str, model: Option<&str>) -> Result<(
 fn validate_model(model: Option<&str>) -> Result<()> {
     if model.is_some_and(|model| model.trim().is_empty()) {
         bail!("model values cannot be empty");
+    }
+    Ok(())
+}
+
+fn validate_reasoning_effort(
+    config_path: &str,
+    harness: Harness,
+    model: Option<&str>,
+    reasoning_effort: ReasoningEffort,
+) -> Result<()> {
+    if harness == Harness::Opencode
+        && reasoning_effort != ReasoningEffort::Default
+        && model.is_none()
+    {
+        bail!(
+            "{config_path}.reasoning_effort requires an explicit OpenCode model so Cadence can select its variant"
+        );
     }
     Ok(())
 }
@@ -277,7 +368,7 @@ mod tests {
         assert_eq!(parsed.orchestrator.max_parallel, Some(4));
         assert_eq!(parsed.workers.max_parallel, None);
         assert!(!parsed.workers.yolo_with_worktrees_only);
-        assert!(!parsed.git.use_worktrees);
+        assert!(!parsed.use_git_worktrees);
     }
 
     #[test]
@@ -293,13 +384,21 @@ mod tests {
         config.workers.yolo_with_worktrees_only = true;
         assert!(config.validate().is_err());
 
-        config.git.use_worktrees = true;
+        config.use_git_worktrees = true;
         assert!(config.validate().is_ok());
 
-        config.git.use_worktrees = false;
+        config.use_git_worktrees = false;
         config.workers.yolo_with_worktrees_only = false;
         config.yolo = true;
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_old_nested_worktree_setting() {
+        let raw = toml::to_string_pretty(&Config::default())
+            .unwrap()
+            .replace("[git]\n", "[git]\nuse_worktrees = false\n");
+        assert!(toml::from_str::<Config>(&raw).is_err());
     }
 
     #[test]
@@ -324,6 +423,18 @@ mod tests {
     }
 
     #[test]
+    fn requires_a_model_for_opencode_reasoning() {
+        let mut config = Config::default();
+        config.orchestrator.harness = Harness::Opencode;
+        config.orchestrator.model = None;
+
+        assert!(config.validate().is_err());
+
+        config.orchestrator.model = Some("openai/gpt-5.2".into());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn resolves_named_roles_and_generalist_fallback() {
         let mut config = Config::default();
         config.workers.roles.insert(
@@ -332,17 +443,20 @@ mod tests {
                 description: "Investigate options and gather evidence".into(),
                 harness: WorkerHarness::Opencode,
                 model: Some("research-model".into()),
+                reasoning_effort: Some(ReasoningEffort::Low),
             },
         );
 
         let generalist = config.workers.role(None).unwrap();
         assert_eq!(generalist.1, WorkerHarness::Inherit);
         assert_eq!(generalist.2, None);
+        assert_eq!(generalist.3, ReasoningEffort::Default);
 
         let research = config.workers.role(Some("research")).unwrap();
         assert_eq!(research.0, "Investigate options and gather evidence");
         assert_eq!(research.1, WorkerHarness::Opencode);
         assert_eq!(research.2, Some("research-model"));
+        assert_eq!(research.3, ReasoningEffort::Low);
         assert!(config.workers.role_catalog().contains("- research:"));
         assert!(config.validate().is_ok());
 
@@ -399,6 +513,7 @@ cleanup_on_success = true
                 description: "Ambiguous fallback".into(),
                 harness: WorkerHarness::Inherit,
                 model: None,
+                reasoning_effort: None,
             },
         );
         assert!(config.validate().is_err());
@@ -410,6 +525,7 @@ cleanup_on_success = true
                 description: " ".into(),
                 harness: WorkerHarness::Inherit,
                 model: None,
+                reasoning_effort: None,
             },
         );
         assert!(config.validate().is_err());

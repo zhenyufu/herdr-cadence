@@ -7,6 +7,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+use crate::config::{Harness, ReasoningEffort};
+
 const SHELL_READY_ATTEMPTS: usize = 100;
 const SHELL_READY_RETRY_DELAY: Duration = Duration::from_millis(100);
 const AGENT_PANE_BUSY_RETRY_DELAYS: [Duration; 8] = [
@@ -192,28 +194,38 @@ impl Herdr {
     pub fn start_agent(
         &self,
         name: &str,
-        harness: &str,
+        harness: Harness,
         pane_id: &str,
         model: Option<&str>,
+        reasoning_effort: ReasoningEffort,
         agent_args: &[String],
     ) -> Result<()> {
         self.wait_for_available_shell(pane_id)?;
+        let model = launch_model(harness, model, reasoning_effort)?;
         let mut args = vec![
             "agent".to_string(),
             "start".into(),
             name.into(),
             "--kind".into(),
-            harness.into(),
+            harness.as_str().into(),
             "--pane".into(),
             pane_id.into(),
             "--timeout".into(),
             "120000".into(),
         ];
-        if model.is_some() || !agent_args.is_empty() {
+        if model.is_some() || reasoning_effort.as_str().is_some() || !agent_args.is_empty() {
             args.push("--".into());
         }
-        if let Some(model) = model {
-            args.extend(["--model".into(), model.into()]);
+        if let Some(model) = &model {
+            args.extend(["--model".into(), model.clone()]);
+        }
+        if harness == Harness::Codex
+            && let Some(reasoning_effort) = reasoning_effort.as_str()
+        {
+            args.extend([
+                "--config".into(),
+                format!("model_reasoning_effort=\"{reasoning_effort}\""),
+            ]);
         }
         args.extend(agent_args.iter().cloned());
         for delay in AGENT_PANE_BUSY_RETRY_DELAYS {
@@ -256,6 +268,24 @@ impl Herdr {
         self.checked(["tab", "close", tab_id])?;
         Ok(())
     }
+}
+
+fn launch_model(
+    harness: Harness,
+    model: Option<&str>,
+    reasoning_effort: ReasoningEffort,
+) -> Result<Option<String>> {
+    let Some(reasoning_effort) = reasoning_effort.as_str() else {
+        return Ok(model.map(str::to_string));
+    };
+    if harness == Harness::Codex {
+        return Ok(model.map(str::to_string));
+    }
+    let model = model.context(
+        "OpenCode reasoning_effort requires an explicit model so Cadence can select its variant",
+    )?;
+    let model = model.split_once('#').map_or(model, |(model, _)| model);
+    Ok(Some(format!("{model}#{reasoning_effort}")))
 }
 
 fn orchestrator_label(root: &Path) -> String {
@@ -342,5 +372,20 @@ mod tests {
         assert_eq!(parsed.workspace_id.as_deref(), Some("w1"));
         assert_eq!(parsed.pane_id, "p1");
         assert_eq!(parsed.checkout_path.as_deref(), Some("/tmp/w"));
+    }
+
+    #[test]
+    fn maps_opencode_reasoning_to_model_variant() {
+        assert_eq!(
+            launch_model(
+                Harness::Opencode,
+                Some("openai/gpt-5.2#low"),
+                ReasoningEffort::High,
+            )
+            .unwrap()
+            .as_deref(),
+            Some("openai/gpt-5.2#high")
+        );
+        assert!(launch_model(Harness::Opencode, None, ReasoningEffort::High).is_err());
     }
 }
