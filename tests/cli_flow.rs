@@ -134,6 +134,37 @@ fn reports_config_parse_error_causes() {
 }
 
 #[test]
+fn validates_and_resolves_project_config() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    assert!(
+        cadence(repo.path(), state.path(), &["action", "enable-project"])
+            .status
+            .success()
+    );
+
+    let validation = cadence(repo.path(), state.path(), &["action", "validate-config"]);
+
+    assert!(
+        validation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
+    assert_eq!(value["valid"], true);
+    assert_eq!(value["enabled"], true);
+    assert_eq!(value["use_git_worktrees"], false);
+    assert_eq!(value["orchestrator"]["harness"], "codex");
+    assert_eq!(value["orchestrator"]["model"], "gpt-5.6-sol");
+    assert_eq!(value["orchestrator"]["reasoning_effort"], "high");
+    assert_eq!(value["orchestrator"]["max_parallel"], 4);
+    let roles = value["roles"].as_array().unwrap();
+    assert!(roles.iter().any(|role| role["name"] == "generalist"));
+    assert!(roles.iter().any(|role| role["name"] == "qa"));
+    assert!(roles.iter().any(|role| role["name"] == "research"));
+}
+
+#[test]
 fn runs_worker_in_shared_checkout_by_default() {
     run_worker_flow(false, false, false);
 }

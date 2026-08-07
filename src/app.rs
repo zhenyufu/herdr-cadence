@@ -191,6 +191,38 @@ impl App {
         }))
     }
 
+    pub fn validate_config(&self) -> Result<Value> {
+        let config = Config::load(&self.root)?;
+        let roles = std::iter::once(GENERALIST_ROLE)
+            .chain(config.workers.roles.keys().map(String::as_str))
+            .map(|name| {
+                let (description, harness, model, reasoning_effort) =
+                    config.workers.role(Some(name))?;
+                Ok(json!({
+                    "name": name,
+                    "description": description,
+                    "harness": harness.resolve(config.orchestrator.harness),
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(json!({
+            "valid": true,
+            "config": Config::path(&self.root),
+            "enabled": config.enabled,
+            "yolo": config.yolo,
+            "use_git_worktrees": config.use_git_worktrees,
+            "orchestrator": {
+                "harness": config.orchestrator.harness,
+                "model": config.orchestrator.model,
+                "reasoning_effort": config.orchestrator.reasoning_effort,
+                "max_parallel": config.max_parallel(),
+            },
+            "roles": roles,
+        }))
+    }
+
     pub fn spawn_worker(&self, request_file: &Path) -> Result<Value> {
         let config = self.enabled_config()?;
         let use_worktree = config.use_git_worktrees;

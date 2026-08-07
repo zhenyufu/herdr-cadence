@@ -39,6 +39,13 @@ description = "Print this project's active run and Worker status"
 contexts = ["workspace"]
 command = ["bin/herdr-cadence", "action", "status"]
 
+[[actions]]
+id = "validate-config"
+title = "Cadence: Validate Config"
+description = "Validate and print this project's resolved Cadence configuration"
+contexts = ["workspace"]
+command = ["bin/herdr-cadence", "action", "validate-config"]
+
 [[events]]
 on = "pane.agent_status_changed"
 command = ["bin/herdr-cadence", "event"]

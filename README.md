@@ -101,6 +101,14 @@ View the current run with:
 herdr plugin action invoke herdr-cadence.status
 ```
 
+Validate the project configuration and print its resolved Orchestrator and Worker-role settings with:
+
+```sh
+herdr plugin action invoke herdr-cadence.validate-config
+```
+
+Invalid configurations fail with the underlying TOML location and validation causes in the plugin log.
+
 ## Develop
 
 ```sh

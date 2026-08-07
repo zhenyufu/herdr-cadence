@@ -39,6 +39,7 @@ enum Action {
     DisableProject,
     Start,
     Status,
+    ValidateConfig,
 }
 
 #[derive(Subcommand)]
@@ -115,6 +116,7 @@ fn run() -> Result<()> {
             Action::DisableProject => app.disable_project()?,
             Action::Start => app.start(&context_workspace_id()?)?,
             Action::Status => app.status()?,
+            Action::ValidateConfig => app.validate_config()?,
         },
         Command::Startup => app.startup()?,
         Command::Event => {
