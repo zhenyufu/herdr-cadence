@@ -46,6 +46,7 @@ Replace `<cadence-bin>` and `<cadence-state-dir>` with the absolute values shown
 schema_version = 1
 enabled = true
 yolo = false # full access for the Orchestrator and every Worker
+worker_default = "generalist"
 
 [orchestrator]
 harness = "codex" # or "opencode"
@@ -57,40 +58,40 @@ max_parallel = 4
 auto_integrate = true
 cleanup_on_success = true
 
-[workers]
-harness = "inherit" # or "codex" / "opencode"
+[workers.roles.generalist]
+description = "Use for general implementation tasks that do not match a specialized role"
+harness = "codex" # or "opencode" / "inherit"
 model = "gpt-5.6-terra" # optional; omit to use the harness default
-reasoning_effort = "medium" # inherited by roles unless overridden
-version_control_mode = "git-worktree" # generalist: shared-checkout / git-worktree
-generalist_description = "Use for general implementation tasks that do not match a specialized role"
+reasoning_effort = "medium"
+version_control_mode = "git-worktree" # shared-checkout / git-worktree
 
 [workers.roles.planner]
 description = "Use for plan mode"
-harness = "inherit"
+harness = "codex"
 model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 version_control_mode = "shared-checkout"
 
 [workers.roles.research]
 description = "Use for investigation and evidence gathering"
-harness = "inherit"
+harness = "codex"
 model = "gpt-5.6-sol"
 reasoning_effort = "high"
 version_control_mode = "shared-checkout"
 
 [workers.roles.qa]
 description = "Use for test planning, validation, and regression investigation"
-harness = "inherit"
+harness = "codex"
 model = "gpt-5.6-luna"
 reasoning_effort = "medium"
-version_control_mode = "git-worktree"
+version_control_mode = "shared-checkout"
 ```
 
-The top-level `[workers]` settings define the `generalist` fallback. The Orchestrator chooses a named role from its description and uses `generalist` when none is a good match. Named roles inherit the Worker reasoning effort unless they override it. A Worker request can override its role's harness, model, or reasoning effort, but cannot exceed `max_parallel` or overlap another active Worker's path scope.
+Every Worker role is fully defined under `[workers.roles.<name>]`. The Orchestrator chooses a role from its description and uses top-level `worker_default` when none is a better match. A Worker request can override its role's harness, model, or reasoning effort, but cannot exceed `orchestrator.max_parallel` or overlap another active Worker's path scope.
 
 Reasoning effort accepts `default`, `low`, `medium`, `high`, and `xhigh`. Cadence maps it to Codex's `model_reasoning_effort` and to an OpenCode model variant. OpenCode reasoning requires an explicit `provider/model`; for example, `model = "openai/gpt-5.2"` with `reasoning_effort = "high"` launches `openai/gpt-5.2#high`. Variant availability remains model-specific, including `xhigh`. When `model` is omitted, Cadence lets the selected harness use its default model. Workers can inherit the Orchestrator's harness, but not its configured model.
 
-For compatibility, Cadence still accepts `max_parallel` under `[workers]` in existing schema-version-1 configs, but it cannot be set in both sections. Each role owns its checkout behavior. `version_control_mode = "shared-checkout"` gives the Worker direct access to the shared project checkout; it may complete with a report only or commit files in its assigned scope, including a root Markdown artifact named for the Worker. `version_control_mode = "git-worktree"` gives every Worker in that role an isolated branch and checkout. Worker requests cannot override the role's mode.
+Each role owns its checkout behavior. `version_control_mode = "shared-checkout"` gives the Worker direct access to the shared project checkout; it may complete with a report only or commit files in its assigned scope, including a root Markdown artifact named for the Worker. `version_control_mode = "git-worktree"` gives every Worker in that role an isolated branch and checkout. Worker requests cannot override the role's mode.
 
 Isolated Codex Workers run autonomously with `workspace-write` sandboxing and no approval prompts. They can write their worktree and Cadence state; unavailable external operations fail for the Worker to report to the Orchestrator. Top-level `yolo = true` is the single unrestricted override for the Orchestrator and every Worker and does not require worktrees. It passes Codex's dangerous approval-and-sandbox bypass (or OpenCode auto-approval) to every agent. Worktrees isolate Git changes, not host access.
 

@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::config::{Config, GENERALIST_ROLE, Harness, VersionControlMode};
+use crate::config::{Config, Harness, VersionControlMode};
 use crate::git;
 use crate::herdr::Herdr;
 use crate::model::{
@@ -200,11 +200,14 @@ impl App {
 
     pub fn validate_config(&self) -> Result<Value> {
         let config = Config::load(&self.root)?;
-        let roles = std::iter::once(GENERALIST_ROLE)
-            .chain(config.workers.roles.keys().map(String::as_str))
+        let roles = config
+            .workers
+            .roles
+            .keys()
+            .map(String::as_str)
             .map(|name| {
                 let (description, harness, model, reasoning_effort, version_control_mode) =
-                    config.workers.role(Some(name))?;
+                    config.workers.role(name)?;
                 Ok(json!({
                     "name": name,
                     "description": description,
@@ -220,6 +223,7 @@ impl App {
             "config": Config::path(&self.root),
             "enabled": config.enabled,
             "yolo": config.yolo,
+            "worker_default": config.worker_default,
             "orchestrator": {
                 "harness": config.orchestrator.harness,
                 "model": config.orchestrator.model,
@@ -239,14 +243,17 @@ impl App {
                 .with_context(|| format!("cannot open {}", request_file.display()))?,
         )?;
         let request = request.validate_and_normalize()?;
-        let role_name = request.role.as_deref().unwrap_or(GENERALIST_ROLE);
+        let role_name = request
+            .role
+            .as_deref()
+            .unwrap_or(config.worker_default.as_str());
         let (
             role_description,
             role_harness,
             role_model,
             role_reasoning_effort,
             version_control_mode,
-        ) = config.workers.role(Some(role_name))?;
+        ) = config.workers.role(role_name)?;
         let use_worktree = version_control_mode == VersionControlMode::GitWorktree;
         let role_name = role_name.to_string();
         let role_description = role_description.to_string();

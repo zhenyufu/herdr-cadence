@@ -48,7 +48,7 @@ pub fn orchestrator(
 Available Worker roles:
 {roles}
 
-Choose the role whose description best matches each task. Use `generalist` when no specialized role is a good match. Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. A shared-checkout Worker may create a root Markdown artifact named for its display name when useful, but include that path in its assigned scope. Create a JSON request with title, task, scope, acceptance, and role; harness, model, and reasoning_effort are optional overrides. Then run:
+Choose the role whose description best matches each task. Use the configured default role `{worker_default}` when no specialized role is a good match. Use at most {max} concurrent Workers with non-overlapping repository-relative scopes. A shared-checkout Worker may create a root Markdown artifact named for its display name when useful, but include that path in its assigned scope. Create a JSON request with title, task, scope, acceptance, and role; harness, model, and reasoning_effort are optional overrides. Then run:
   {bin} --state-dir {state} --project-root {root} worker spawn --request-file <path>
 Inspect with `worker list`, `worker status <id>`, and `worker report <id>`. Send follow-up work with `worker prompt <id> --prompt-file <path>` or cancel with `worker cancel <id>`. {integration_guidance} Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no Workers remain active.
 
@@ -60,6 +60,7 @@ In user-facing messages, use each spawn result's `display_name`, such as `[Resea
         state = state_dir.display(),
         root = project_root.display(),
         roles = roles,
+        worker_default = config.worker_default,
         max = max_parallel,
         checkout_guidance = checkout_guidance,
         integration_guidance = integration_guidance,

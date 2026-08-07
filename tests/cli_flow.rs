@@ -75,28 +75,32 @@ fn enables_and_reports_project_status() {
     );
     let config = fs::read_to_string(repo.path().join(".herdr/cadence.toml")).unwrap();
     assert!(config.contains("harness = \"codex\""));
+    assert!(!config.contains("harness = \"inherit\""));
     assert!(config.contains("model = \"gpt-5.6-terra\""));
     assert!(config.contains("reasoning_effort = \"high\""));
     assert!(config.contains("version_control_mode = \"git-worktree\""));
     assert!(config.contains("version_control_mode = \"shared-checkout\""));
-    assert!(config.contains("generalist_description ="));
+    assert!(config.contains("worker_default = \"generalist\""));
+    assert!(config.contains("[workers.roles.generalist]"));
+    assert!(config.contains("description = \"Use for general implementation tasks"));
     assert!(config.contains("[workers.roles.planner]"));
     assert!(!config.contains("[workers.roles.planning]"));
     assert!(config.contains("[workers.roles.research]"));
     assert!(config.contains("[workers.roles.qa]"));
-    assert!(config.find("[git]").unwrap() < config.find("[workers]").unwrap());
+    assert!(config.find("[git]").unwrap() < config.find("[workers.roles.").unwrap());
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
     assert_eq!(parsed.orchestrator.max_parallel, Some(4));
     assert_eq!(parsed.orchestrator.model.as_deref(), Some("gpt-5.6-terra"));
-    assert_eq!(parsed.workers.model.as_deref(), Some("gpt-5.6-terra"));
+    assert_eq!(parsed.worker_default, "generalist");
+    let generalist = parsed.workers.roles.get("generalist").unwrap();
+    assert_eq!(generalist.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(
-        parsed.workers.reasoning_effort,
+        generalist.reasoning_effort,
         herdr_cadence::config::ReasoningEffort::Medium
     );
-    assert_eq!(parsed.workers.max_parallel, None);
     assert!(!parsed.yolo);
     assert_eq!(
-        parsed.workers.version_control_mode,
+        generalist.version_control_mode,
         herdr_cadence::config::VersionControlMode::GitWorktree
     );
     assert!(!repo.path().join("AGENTS.md").exists());
@@ -164,6 +168,7 @@ fn validates_and_resolves_project_config() {
     let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
     assert_eq!(value["valid"], true);
     assert_eq!(value["enabled"], true);
+    assert_eq!(value["worker_default"], "generalist");
     assert_eq!(value["orchestrator"]["harness"], "codex");
     assert_eq!(value["orchestrator"]["model"], "gpt-5.6-terra");
     assert_eq!(value["orchestrator"]["reasoning_effort"], "high");
@@ -180,9 +185,9 @@ fn validates_and_resolves_project_config() {
         role["name"] == "research" && role["version_control_mode"] == "shared-checkout"
     }));
     assert!(
-        roles
-            .iter()
-            .any(|role| { role["name"] == "qa" && role["version_control_mode"] == "git-worktree" })
+        roles.iter().any(|role| {
+            role["name"] == "qa" && role["version_control_mode"] == "shared-checkout"
+        })
     );
 }
 
@@ -262,19 +267,14 @@ fn run_worker_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) 
             1,
         )
         .replacen(
-            "[workers]\nharness = \"inherit\"\nmodel = \"gpt-5.6-terra\"",
-            "[workers]\nharness = \"codex\"\nmodel = \"worker-model\"",
-            1,
-        )
-        .replacen(
-            "[workers.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"inherit\"\nmodel = \"gpt-5.6-luna\"\nreasoning_effort = \"medium\"",
+            "[workers.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"codex\"\nmodel = \"gpt-5.6-luna\"\nreasoning_effort = \"medium\"",
             "[workers.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\nreasoning_effort = \"low\"",
             1,
         );
-    if !use_worktree {
+    if use_worktree {
         config = config.replace(
-            "reasoning_effort = \"low\"\nversion_control_mode = \"git-worktree\"",
             "reasoning_effort = \"low\"\nversion_control_mode = \"shared-checkout\"",
+            "reasoning_effort = \"low\"\nversion_control_mode = \"git-worktree\"",
         );
     }
     if global_yolo {
@@ -506,7 +506,9 @@ fi
             "shared-checkout"
         }
     )));
-    assert!(calls.contains("Use `generalist` when no specialized role is a good match"));
+    assert!(calls.contains(
+        "Use the configured default role `generalist` when no specialized role is a good match"
+    ));
     assert!(calls.contains("No user task is assigned yet"));
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
     assert!(calls.contains("Handle trivial, low-risk work directly"));

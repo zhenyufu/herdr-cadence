@@ -15,6 +15,8 @@ pub struct Config {
     pub enabled: bool,
     #[serde(default)]
     pub yolo: bool,
+    #[serde(default = "default_worker_role")]
+    pub worker_default: String,
     pub orchestrator: AgentConfig,
     pub git: GitConfig,
     pub workers: WorkerConfig,
@@ -35,18 +37,6 @@ pub struct AgentConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerConfig {
-    pub harness: WorkerHarness,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub reasoning_effort: ReasoningEffort,
-    #[serde(default)]
-    pub version_control_mode: VersionControlMode,
-    #[serde(default = "default_generalist_description")]
-    pub generalist_description: String,
-    // Accepted for schema v1 compatibility; new configs place this under orchestrator.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_parallel: Option<usize>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub roles: BTreeMap<String, RoleConfig>,
 }
@@ -58,8 +48,8 @@ pub struct RoleConfig {
     pub harness: WorkerHarness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub reasoning_effort: ReasoningEffort,
     #[serde(default)]
     pub version_control_mode: VersionControlMode,
 }
@@ -142,6 +132,7 @@ impl Default for Config {
             schema_version: 1,
             enabled: true,
             yolo: false,
+            worker_default: GENERALIST_ROLE.into(),
             orchestrator: AgentConfig {
                 harness: Harness::Codex,
                 model: Some("gpt-5.6-terra".into()),
@@ -153,12 +144,6 @@ impl Default for Config {
                 cleanup_on_success: true,
             },
             workers: WorkerConfig {
-                harness: WorkerHarness::Inherit,
-                model: Some("gpt-5.6-terra".into()),
-                reasoning_effort: ReasoningEffort::Medium,
-                version_control_mode: VersionControlMode::GitWorktree,
-                generalist_description: default_generalist_description(),
-                max_parallel: None,
                 roles: default_roles(),
             },
         }
@@ -203,9 +188,6 @@ impl Config {
         if self.schema_version != 1 {
             bail!("unsupported config schema_version {}", self.schema_version);
         }
-        if self.orchestrator.max_parallel.is_some() && self.workers.max_parallel.is_some() {
-            bail!("max_parallel cannot be set under both orchestrator and workers");
-        }
         if !(1..=16).contains(&self.max_parallel()) {
             bail!("orchestrator.max_parallel must be between 1 and 16");
         }
@@ -216,23 +198,16 @@ impl Config {
             self.orchestrator.model.as_deref(),
             self.orchestrator.reasoning_effort,
         )?;
-        validate_role(
-            GENERALIST_ROLE,
-            &self.workers.generalist_description,
-            self.workers.model.as_deref(),
-        )?;
-        validate_reasoning_effort(
-            "workers",
-            self.workers.harness.resolve(self.orchestrator.harness),
-            self.workers.model.as_deref(),
-            self.workers.reasoning_effort,
-        )?;
+        if self.worker_default.trim() != self.worker_default || self.worker_default.is_empty() {
+            bail!("worker_default cannot be empty or have surrounding whitespace");
+        }
+        if !self.workers.roles.contains_key(&self.worker_default) {
+            bail!(
+                "worker_default references unknown role {:?}",
+                self.worker_default
+            );
+        }
         for (name, role) in &self.workers.roles {
-            if name == GENERALIST_ROLE {
-                bail!(
-                    "workers.roles.generalist is reserved; configure the generalist under [workers]"
-                );
-            }
             if name.trim() != name || name.is_empty() {
                 bail!("worker role names cannot be empty or have surrounding whitespace");
             }
@@ -241,25 +216,21 @@ impl Config {
                 &format!("workers.roles.{name}"),
                 role.harness.resolve(self.orchestrator.harness),
                 role.model.as_deref(),
-                role.reasoning_effort
-                    .unwrap_or(self.workers.reasoning_effort),
+                role.reasoning_effort,
             )?;
         }
         Ok(())
     }
 
     pub fn max_parallel(&self) -> usize {
-        self.orchestrator
-            .max_parallel
-            .or(self.workers.max_parallel)
-            .unwrap_or(4)
+        self.orchestrator.max_parallel.unwrap_or(4)
     }
 }
 
 impl WorkerConfig {
     pub fn role(
         &self,
-        name: Option<&str>,
+        name: &str,
     ) -> Result<(
         &str,
         WorkerHarness,
@@ -267,16 +238,6 @@ impl WorkerConfig {
         ReasoningEffort,
         VersionControlMode,
     )> {
-        let name = name.unwrap_or(GENERALIST_ROLE);
-        if name == GENERALIST_ROLE {
-            return Ok((
-                &self.generalist_description,
-                self.harness,
-                self.model.as_deref(),
-                self.reasoning_effort,
-                self.version_control_mode,
-            ));
-        }
         let role = self
             .roles
             .get(name)
@@ -285,35 +246,30 @@ impl WorkerConfig {
             &role.description,
             role.harness,
             role.model.as_deref(),
-            role.reasoning_effort.unwrap_or(self.reasoning_effort),
+            role.reasoning_effort,
             role.version_control_mode,
         ))
     }
 
     pub fn role_catalog(&self) -> String {
-        std::iter::once((
-            GENERALIST_ROLE,
-            self.generalist_description.as_str(),
-            self.version_control_mode,
-        ))
-        .chain(self.roles.iter().map(|(name, role)| {
-            (
-                name.as_str(),
-                role.description.as_str(),
-                role.version_control_mode,
-            )
-        }))
-        .map(|(name, description, mode)| format!("- {name} [{}]: {description}", mode.as_str()))
-        .collect::<Vec<_>>()
-        .join("\n")
+        self.roles
+            .iter()
+            .map(|(name, role)| {
+                (
+                    name.as_str(),
+                    role.description.as_str(),
+                    role.version_control_mode,
+                )
+            })
+            .map(|(name, description, mode)| format!("- {name} [{}]: {description}", mode.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn uses_git_worktrees(&self) -> bool {
-        self.version_control_mode == VersionControlMode::GitWorktree
-            || self
-                .roles
-                .values()
-                .any(|role| role.version_control_mode == VersionControlMode::GitWorktree)
+        self.roles
+            .values()
+            .any(|role| role.version_control_mode == VersionControlMode::GitWorktree)
     }
 }
 
@@ -326,19 +282,31 @@ impl VersionControlMode {
     }
 }
 
-fn default_generalist_description() -> String {
-    "Use for general implementation tasks that do not match a specialized role".into()
+fn default_worker_role() -> String {
+    GENERALIST_ROLE.into()
 }
 
 fn default_roles() -> BTreeMap<String, RoleConfig> {
     [
         (
+            GENERALIST_ROLE.into(),
+            RoleConfig {
+                description:
+                    "Use for general implementation tasks that do not match a specialized role"
+                        .into(),
+                harness: WorkerHarness::Codex,
+                model: Some("gpt-5.6-terra".into()),
+                reasoning_effort: ReasoningEffort::Medium,
+                version_control_mode: VersionControlMode::GitWorktree,
+            },
+        ),
+        (
             "planner".into(),
             RoleConfig {
                 description: "Use for plan mode".into(),
-                harness: WorkerHarness::Inherit,
+                harness: WorkerHarness::Codex,
                 model: Some("gpt-5.6-sol".into()),
-                reasoning_effort: Some(ReasoningEffort::Xhigh),
+                reasoning_effort: ReasoningEffort::Xhigh,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -346,9 +314,9 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             "research".into(),
             RoleConfig {
                 description: "Use for investigation and evidence gathering".into(),
-                harness: WorkerHarness::Inherit,
+                harness: WorkerHarness::Codex,
                 model: Some("gpt-5.6-sol".into()),
-                reasoning_effort: Some(ReasoningEffort::High),
+                reasoning_effort: ReasoningEffort::High,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -357,10 +325,10 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             RoleConfig {
                 description: "Use for test planning, validation, and regression investigation"
                     .into(),
-                harness: WorkerHarness::Inherit,
+                harness: WorkerHarness::Codex,
                 model: Some("gpt-5.6-luna".into()),
-                reasoning_effort: Some(ReasoningEffort::Medium),
-                version_control_mode: VersionControlMode::GitWorktree,
+                reasoning_effort: ReasoningEffort::Medium,
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
     ]
@@ -410,12 +378,13 @@ mod tests {
         assert_eq!(parsed, Config::default());
         assert!(raw.contains("max_parallel = 4"));
         assert!(!parsed.yolo);
+        assert_eq!(parsed.worker_default, GENERALIST_ROLE);
         assert_eq!(parsed.orchestrator.max_parallel, Some(4));
-        assert_eq!(parsed.workers.max_parallel, None);
-        assert_eq!(
-            parsed.workers.version_control_mode,
-            VersionControlMode::GitWorktree
-        );
+        let generalist = parsed.workers.role(GENERALIST_ROLE).unwrap();
+        assert_eq!(generalist.1, WorkerHarness::Codex);
+        assert_eq!(generalist.2, Some("gpt-5.6-terra"));
+        assert_eq!(generalist.3, ReasoningEffort::Medium);
+        assert_eq!(generalist.4, VersionControlMode::GitWorktree);
     }
 
     #[test]
@@ -440,8 +409,8 @@ mod tests {
     #[test]
     fn rejects_removed_worker_yolo_setting() {
         let raw = toml::to_string_pretty(&Config::default()).unwrap().replace(
-            "[workers]\n",
-            "[workers]\nyolo_with_worktrees_only = true\n",
+            "[workers.roles.generalist]\n",
+            "[workers.roles.generalist]\nyolo_with_worktrees_only = true\n",
         );
         assert!(toml::from_str::<Config>(&raw).is_err());
     }
@@ -468,7 +437,7 @@ mod tests {
     fn accepts_configured_models() {
         let mut config = Config::default();
         config.orchestrator.model = Some("orchestrator-model".into());
-        config.workers.model = Some("worker-model".into());
+        config.workers.roles.get_mut(GENERALIST_ROLE).unwrap().model = Some("worker-model".into());
 
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
@@ -510,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_named_roles_and_generalist_fallback() {
+    fn resolves_fully_configured_roles() {
         let mut config = Config::default();
         config.workers.roles.insert(
             "research".into(),
@@ -518,18 +487,18 @@ mod tests {
                 description: "Investigate options and gather evidence".into(),
                 harness: WorkerHarness::Opencode,
                 model: Some("research-model".into()),
-                reasoning_effort: Some(ReasoningEffort::Low),
+                reasoning_effort: ReasoningEffort::Low,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
 
-        let generalist = config.workers.role(None).unwrap();
-        assert_eq!(generalist.1, WorkerHarness::Inherit);
+        let generalist = config.workers.role(GENERALIST_ROLE).unwrap();
+        assert_eq!(generalist.1, WorkerHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
         assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::GitWorktree);
 
-        let research = config.workers.role(Some("research")).unwrap();
+        let research = config.workers.role("research").unwrap();
         assert_eq!(research.0, "Investigate options and gather evidence");
         assert_eq!(research.1, WorkerHarness::Opencode);
         assert_eq!(research.2, Some("research-model"));
@@ -545,11 +514,11 @@ mod tests {
 
         let raw = toml::to_string_pretty(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&raw).unwrap(), config);
-        assert!(config.workers.role(Some("missing")).is_err());
+        assert!(config.workers.role("missing").is_err());
     }
 
     #[test]
-    fn loads_worker_config_without_roles() {
+    fn rejects_worker_config_without_the_default_role() {
         let raw = r#"
 schema_version = 1
 enabled = true
@@ -558,8 +527,6 @@ enabled = true
 harness = "codex"
 
 [workers]
-harness = "inherit"
-max_parallel = 4
 
 [git]
 auto_integrate = true
@@ -568,54 +535,40 @@ cleanup_on_success = true
 
         let config: Config = toml::from_str(raw).unwrap();
         assert!(!config.yolo);
+        assert_eq!(config.worker_default, GENERALIST_ROLE);
         assert_eq!(config.orchestrator.max_parallel, None);
         assert_eq!(config.max_parallel(), 4);
-        assert_eq!(
-            config.workers.version_control_mode,
-            VersionControlMode::SharedCheckout
-        );
-        assert_eq!(
-            config.workers.generalist_description,
-            default_generalist_description()
-        );
         assert!(config.workers.roles.is_empty());
-        assert!(config.validate().is_ok());
+        assert!(config.validate().is_err());
     }
 
     #[test]
-    fn rejects_parallelism_in_both_config_sections() {
-        let mut config = Config::default();
-        config.workers.max_parallel = Some(2);
+    fn rejects_an_unknown_default_role() {
+        let config = Config {
+            worker_default: "missing".into(),
+            ..Config::default()
+        };
 
         assert!(config.validate().is_err());
     }
 
     #[test]
-    fn rejects_reserved_or_invalid_roles() {
+    fn rejects_invalid_roles() {
         let mut config = Config::default();
         config.workers.roles.insert(
-            GENERALIST_ROLE.into(),
+            " invalid ".into(),
             RoleConfig {
                 description: "Ambiguous fallback".into(),
                 harness: WorkerHarness::Inherit,
                 model: None,
-                reasoning_effort: None,
+                reasoning_effort: ReasoningEffort::Default,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
         assert!(config.validate().is_err());
 
-        config.workers.roles.clear();
-        config.workers.roles.insert(
-            "qa".into(),
-            RoleConfig {
-                description: " ".into(),
-                harness: WorkerHarness::Inherit,
-                model: None,
-                reasoning_effort: None,
-                version_control_mode: VersionControlMode::SharedCheckout,
-            },
-        );
+        config.workers.roles.remove(" invalid ");
+        config.workers.roles.get_mut("qa").unwrap().description = " ".into();
         assert!(config.validate().is_err());
     }
 }
