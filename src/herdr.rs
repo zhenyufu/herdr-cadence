@@ -293,7 +293,7 @@ fn orchestrator_label(root: &Path) -> String {
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or("project");
-    format!("[Cadence]{project}")
+    format!("[Lead] {project}")
 }
 
 fn command_error(output: &Output) -> anyhow::Error {
@@ -372,6 +372,14 @@ mod tests {
         assert_eq!(parsed.workspace_id.as_deref(), Some("w1"));
         assert_eq!(parsed.pane_id, "p1");
         assert_eq!(parsed.checkout_path.as_deref(), Some("/tmp/w"));
+    }
+
+    #[test]
+    fn labels_the_orchestrator_as_project_lead() {
+        assert_eq!(
+            orchestrator_label(Path::new("/tmp/example-project")),
+            "[Lead] example-project"
+        );
     }
 
     #[test]
