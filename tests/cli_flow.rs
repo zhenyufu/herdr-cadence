@@ -67,7 +67,7 @@ fn cadence(root: &Path, state: &Path, args: &[&str]) -> Output {
 fn enables_and_reports_project_status() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
-    let enabled = cadence(repo.path(), state.path(), &["action", "enable-project"]);
+    let enabled = cadence(repo.path(), state.path(), &["action", "init"]);
     assert!(
         enabled.status.success(),
         "{}",
@@ -118,7 +118,7 @@ fn reports_config_parse_error_causes() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
-        cadence(repo.path(), state.path(), &["action", "enable-project"])
+        cadence(repo.path(), state.path(), &["action", "init"])
             .status
             .success()
     );
@@ -153,7 +153,7 @@ fn validates_and_resolves_project_config() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
-        cadence(repo.path(), state.path(), &["action", "enable-project"])
+        cadence(repo.path(), state.path(), &["action", "init"])
             .status
             .success()
     );
@@ -196,7 +196,7 @@ fn rejects_agent_checkout_overrides() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
-        cadence(repo.path(), state.path(), &["action", "enable-project"])
+        cadence(repo.path(), state.path(), &["action", "init"])
             .status
             .success()
     );
@@ -254,7 +254,7 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
-        cadence(repo.path(), state.path(), &["action", "enable-project"])
+        cadence(repo.path(), state.path(), &["action", "init"])
             .status
             .success()
     );

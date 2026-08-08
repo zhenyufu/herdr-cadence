@@ -1,20 +1,24 @@
 # Cadence
+Cadence is a light Orchestrating plugin for Herdr that provides one **Lead** and a fleet of **agents**. Talk to the Lead, and it will spin up agents with different roles fully integrated with Herdr tabs and git worktrees.
 
-Cadence is a Herdr plugin that gives one Codex or OpenCode **Lead / Orchestrator** a small fleet of **agents**.
-You talk to the Lead in its dedicated Herdr workspace; Cadence creates agent tabs, tracks reports, and can optionally isolate work in Git worktrees.
+## Supported harness
+Supported:
+* Codex
+Untested:
+* Opencode
 
-## Install
+## Install and usage
 
-Requires Herdr 0.7.5+, Git, and either Codex or OpenCode.
+Requires Herdr 0.7.5+, Git, and the agent harness
 
 ```sh
 herdr plugin install zhenyufu/herdr-cadence
 ```
 
-Inside the target repository's Herdr workspace:
+Init a cadence config inside the target repository's Herdr workspace:
 
 ```sh
-herdr plugin action invoke herdr-cadence.enable-project
+herdr plugin action invoke herdr-cadence.init
 ```
 
 Edit and commit `.herdr/cadence.toml`, then start the conversational Lead:
@@ -23,6 +27,24 @@ Edit and commit `.herdr/cadence.toml`, then start the conversational Lead:
 herdr plugin action invoke herdr-cadence.start
 ```
 
+View the current run status:
+
+```sh
+herdr plugin action invoke herdr-cadence.status
+```
+
+Validate the project configuration and print its resolved Lead and agent-role settings with:
+
+```sh
+herdr plugin action invoke herdr-cadence.validate-config
+```
+
+Alias for the actions
+```sh
+alias cadence-init="herdr plugin action invoke herdr-cadence.init"
+alias cadence-start="herdr plugin action invoke herdr-cadence.start"
+alias cadence-check="herdr plugin action invoke herdr-cadence.status && herdr plugin action invoke herdr-cadence.validate-config"
+```
 Cadence is globally installed but only acts in repositories with an enabled config.
 It never creates or changes `AGENTS.md`; role and task context is injected when each agent starts.
 
@@ -134,19 +156,6 @@ Cadence does not inject source files, diffs, the full configuration or state sto
 The selected harness may independently load repository instructions such as `AGENTS.md` and inspect files as it works.
 Later Cadence messages are short status notifications to the Lead or explicit follow-up prompts sent to an agent.
 
-View the current run with:
-
-```sh
-herdr plugin action invoke herdr-cadence.status
-```
-
-Validate the project configuration and print its resolved Lead and agent-role settings with:
-
-```sh
-herdr plugin action invoke herdr-cadence.validate-config
-```
-
-Invalid configurations fail with the underlying TOML location and validation causes in the plugin log.
 
 ## Develop
 

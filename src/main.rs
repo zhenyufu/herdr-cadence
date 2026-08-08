@@ -35,7 +35,7 @@ enum Command {
 
 #[derive(Clone, ValueEnum)]
 enum Action {
-    EnableProject,
+    Init,
     DisableProject,
     Start,
     Status,
@@ -112,7 +112,7 @@ fn run() -> Result<()> {
     };
     let value = match cli.command {
         Command::Action { action } => match action {
-            Action::EnableProject => app.enable_project()?,
+            Action::Init => app.init_project()?,
             Action::DisableProject => app.disable_project()?,
             Action::Start => app.start(&context_workspace_id()?)?,
             Action::Status => app.status()?,

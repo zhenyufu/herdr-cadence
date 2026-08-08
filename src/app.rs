@@ -37,7 +37,7 @@ impl App {
         })
     }
 
-    pub fn enable_project(&self) -> Result<Value> {
+    pub fn init_project(&self) -> Result<Value> {
         let path = Config::create(&self.root)?;
         Ok(json!({"enabled": true, "config": path}))
     }
