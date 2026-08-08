@@ -27,26 +27,17 @@ Edit and commit `.herdr/cadence.toml`, then start the conversational Lead:
 herdr plugin action invoke herdr-cadence.start
 ```
 
-View the current run status:
+View the current status as a notification :
 
 ```sh
 herdr plugin action invoke herdr-cadence.status
-```
-
-Status is also shown as a concise Herdr notification. The JSON result includes
-`config_valid` so scripts can check whether the project configuration is valid.
-
-Validate the project configuration and print its resolved Lead and agent-role settings with:
-
-```sh
-herdr plugin action invoke herdr-cadence.validate-config
 ```
 
 Alias for the actions
 ```sh
 alias cadence-init="herdr plugin action invoke herdr-cadence.init"
 alias cadence-start="herdr plugin action invoke herdr-cadence.start"
-alias cadence-check="herdr plugin action invoke herdr-cadence.status && herdr plugin action invoke herdr-cadence.validate-config"
+alias cadence-status="herdr plugin action invoke herdr-cadence.status"
 ```
 Cadence is globally installed but only acts in repositories with an enabled config.
 It never creates or changes `AGENTS.md`; role and task context is injected when each agent starts.
