@@ -88,6 +88,11 @@ impl Herdr {
         Ok(())
     }
 
+    pub fn show_notification(&self, title: &str, body: &str) -> Result<()> {
+        self.checked(["notification", "show", title, "--body", body])?;
+        Ok(())
+    }
+
     pub fn send_ctrl_c(&self, name: &str) -> Result<()> {
         self.checked(["agent", "send-keys", name, "ctrl+c"])?;
         Ok(())

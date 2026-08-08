@@ -33,6 +33,9 @@ View the current run status:
 herdr plugin action invoke herdr-cadence.status
 ```
 
+Status is also shown as a concise Herdr notification. The JSON result includes
+`config_valid` so scripts can check whether the project configuration is valid.
+
 Validate the project configuration and print its resolved Lead and agent-role settings with:
 
 ```sh

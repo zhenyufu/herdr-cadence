@@ -23,9 +23,12 @@ pub struct Run {
     pub status: RunStatus,
     pub base_branch: String,
     pub base_workspace_id: String,
+    #[serde(alias = "orchestrator")]
     pub lead: AgentRef,
     pub created_unix_ms: u128,
+    #[serde(alias = "next_worker")]
     pub next_agent: u32,
+    #[serde(alias = "workers")]
     pub agents: BTreeMap<String, Agent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -323,5 +326,27 @@ mod tests {
         assert!(agent.use_worktree);
         assert!(!agent.yolo);
         assert_eq!(agent.reasoning_effort, ReasoningEffort::Default);
+    }
+
+    #[test]
+    fn reads_runs_with_older_role_field_names() {
+        let run: Run = serde_json::from_value(serde_json::json!({
+            "id": "run-legacy",
+            "status": "active",
+            "base_branch": "main",
+            "base_workspace_id": "workspace-1",
+            "orchestrator": {
+                "name": "cadence-orch-legacy",
+                "harness": "codex"
+            },
+            "created_unix_ms": 1,
+            "next_worker": 1,
+            "workers": {}
+        }))
+        .unwrap();
+
+        assert_eq!(run.lead.name, "cadence-orch-legacy");
+        assert_eq!(run.next_agent, 1);
+        assert!(run.agents.is_empty());
     }
 }

@@ -109,6 +109,7 @@ fn enables_and_reports_project_status() {
     assert!(status.status.success());
     let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(value["enabled"], true);
+    assert_eq!(value["config_valid"], true);
     assert_eq!(value["checkout_clean"], false);
     assert!(value["active_run"].is_null());
 }
@@ -132,8 +133,14 @@ fn reports_config_parse_error_causes() {
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);
 
-    assert!(!status.status.success());
-    let error: serde_json::Value = serde_json::from_slice(&status.stderr).unwrap();
+    assert!(status.status.success());
+    let status_value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status_value["config_valid"], false);
+    assert!(status_value["enabled"].is_null());
+
+    let validation = cadence(repo.path(), state.path(), &["action", "validate-config"]);
+    assert!(!validation.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&validation.stderr).unwrap();
     assert!(
         error["error"]
             .as_str()

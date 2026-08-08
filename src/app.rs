@@ -178,7 +178,7 @@ impl App {
     }
 
     pub fn status(&self) -> Result<Value> {
-        let config = Config::load(&self.root)?;
+        let config = Config::load(&self.root);
         let key = project_key(&self.root);
         let store = self.state.read()?;
         let project = store.projects.get(&key);
@@ -188,12 +188,41 @@ impl App {
                 .as_ref()
                 .and_then(|id| project.runs.get(id))
         });
-        Ok(json!({
+        let config_valid = config.is_ok();
+        let enabled = config.as_ref().ok().map(|config| config.enabled);
+        let checkout_clean = git::is_clean(&self.root)?;
+        let value = json!({
             "project": self.root,
-            "enabled": config.enabled,
-            "checkout_clean": git::is_clean(&self.root)?,
+            "enabled": enabled,
+            "config_valid": config_valid,
+            "checkout_clean": checkout_clean,
             "active_run": run,
-        }))
+        });
+        let project_name = self
+            .root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("project");
+        let run_summary = value
+            .get("active_run")
+            .and_then(Value::as_object)
+            .and_then(|run| run.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or("none");
+        let notification = format!(
+            "Project: {project_name}\nConfig: {}\nEnabled: {}\nCheckout: {}\nRun: {run_summary}",
+            if config_valid { "valid" } else { "invalid" },
+            match enabled {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "unknown",
+            },
+            if checkout_clean { "clean" } else { "dirty" },
+        );
+        let _ = self
+            .herdr
+            .show_notification("Cadence status", &notification);
+        Ok(value)
     }
 
     pub fn validate_config(&self) -> Result<Value> {
