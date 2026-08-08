@@ -67,25 +67,42 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 ```toml
 schema_version = 1
 enabled = true
-yolo = false # full access for the Lead and every agent
+# Give the Lead and every agent unrestricted host access.
+yolo = false
+# Used when no specialized role description is a better match.
 agent_default = "generalist"
 
 [lead]
-harness = "codex" # or "opencode"
-model = "gpt-5.6-terra" # optional; omit to use the harness default
-reasoning_effort = "high" # default / low / medium / high / xhigh
+# codex | opencode
+harness = "codex"
+# Optional; omit to use the harness default. OpenCode models use provider/model.
+model = "gpt-5.6-terra"
+# default | low | medium | high | xhigh
+reasoning_effort = "high"
+# Maximum concurrent agents; accepted range is 1 through 16.
 max_parallel = 4
 
 [git]
+# Applies only to agents using shared-checkout.
 auto_integrate = true
+# Remove successful agent tabs or worktrees after integration.
 cleanup_on_success = true
+
+# Copy and uncomment this block to add a role. Requests cannot override a role's
+# checkout mode or overlap another active agent's path scope.
+# [agents.roles.new_role]
+# description = "When the Lead should select this role"
+# harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
+# model = "provider/model" # Optional; omit to use the selected harness default.
+# reasoning_effort = "medium" # default | low | medium | high | xhigh
+# version_control_mode = "shared-checkout" # shared-checkout | git-worktree
 
 [agents.roles.generalist]
 description = "Use for general implementation tasks that do not match a specialized role"
-harness = "codex" # or "opencode" / "inherit"
-model = "gpt-5.6-terra" # optional; omit to use the harness default
+harness = "codex"
+model = "gpt-5.6-terra"
 reasoning_effort = "medium"
-version_control_mode = "git-worktree" # shared-checkout / git-worktree
+version_control_mode = "git-worktree"
 
 [agents.roles.planner]
 description = "Use for plan mode"
@@ -94,49 +111,20 @@ model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 version_control_mode = "shared-checkout"
 
-[agents.roles.research]
-description = "Use for investigation and evidence gathering"
-harness = "codex"
-model = "gpt-5.6-sol"
-reasoning_effort = "high"
-version_control_mode = "shared-checkout"
-
 [agents.roles.qa]
 description = "Use for test planning, validation, and regression investigation"
 harness = "codex"
 model = "gpt-5.6-luna"
 reasoning_effort = "medium"
 version_control_mode = "shared-checkout"
+
+[agents.roles.research]
+description = "Use for investigation and evidence gathering"
+harness = "codex"
+model = "gpt-5.6-sol"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
 ```
-
-Every agent role is fully defined under `[agents.roles.<name>]`.
-The Lead chooses a role from its description and uses top-level `agent_default` when none is a better match.
-An agent request can override its role's harness, model, or reasoning effort, but cannot exceed `lead.max_parallel` or overlap another active agent's path scope.
-
-Reasoning effort accepts `default`, `low`, `medium`, `high`, and `xhigh`.
-Cadence maps it to Codex's `model_reasoning_effort` and to an OpenCode model variant.
-OpenCode reasoning requires an explicit `provider/model`; for example, `model = "openai/gpt-5.2"` with `reasoning_effort = "high"` launches `openai/gpt-5.2#high`.
-Variant availability remains model-specific, including `xhigh`.
-When `model` is omitted, Cadence lets the selected harness use its default model.
-Agents can inherit the Lead's harness, but not its configured model.
-
-Each role owns its checkout behavior.
-`version_control_mode = "shared-checkout"` gives the agent direct access to the shared project checkout; it may complete with a report only or commit files in its assigned scope, including a root Markdown artifact named for the agent.
-`version_control_mode = "git-worktree"` gives every agent in that role an isolated branch and checkout.
-Agent requests cannot override the role's mode.
-
-Isolated Codex agents run autonomously with `workspace-write` sandboxing and no approval prompts.
-They can write their worktree and Cadence state; unavailable external operations fail for the agent to report to the Lead.
-Top-level `yolo = true` is the single unrestricted override for the Lead and every agent and does not require worktrees.
-It passes Codex's dangerous approval-and-sandbox bypass (or OpenCode auto-approval) to every agent.
-Worktrees isolate Git changes, not host access.
-
-Agents in `shared-checkout` mode commit only when they change files; report-only work needs no commit.
-A `git-worktree` agent must commit clean work, and the Lead reviews its completed report before invoking integration.
-After successful integration, `cleanup_on_success = true` terminates the agent and removes its tab or worktree; the Lead and Cadence run remain active for follow-up tasks.
-`git.auto_integrate` applies only to shared-checkout agents.
-Completed worktrees remain available until review, while failed, cancelled, or conflicting worktrees are retained for inspection; failed cherry-picks are aborted automatically.
-The run ends only when the user explicitly asks the Lead to finish the Cadence session.
 
 ## Injected context
 

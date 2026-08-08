@@ -75,7 +75,6 @@ fn enables_and_reports_project_status() {
     );
     let config = fs::read_to_string(repo.path().join(".herdr/cadence.toml")).unwrap();
     assert!(config.contains("harness = \"codex\""));
-    assert!(!config.contains("harness = \"inherit\""));
     assert!(config.contains("model = \"gpt-5.6-terra\""));
     assert!(config.contains("reasoning_effort = \"high\""));
     assert!(config.contains("version_control_mode = \"git-worktree\""));
@@ -89,6 +88,13 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("[agents.roles.qa]"));
     assert!(config.find("[git]").unwrap() < config.find("[agents.roles.").unwrap());
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
+    assert!(
+        parsed
+            .agents
+            .roles
+            .values()
+            .all(|role| role.harness != herdr_cadence::config::AgentHarness::Inherit)
+    );
     assert_eq!(parsed.lead.max_parallel, Some(4));
     assert_eq!(parsed.lead.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(parsed.agent_default, "generalist");
@@ -266,29 +272,22 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
             .success()
     );
     let config_path = repo.path().join(".herdr/cadence.toml");
-    let mut config = fs::read_to_string(&config_path)
-        .unwrap()
-        .replacen(
-            "harness = \"codex\"\nmodel = \"gpt-5.6-terra\"",
-            "harness = \"opencode\"\nmodel = \"openai/lead-model\"",
-            1,
-        )
-        .replacen(
-            "[agents.roles.qa]\ndescription = \"Use for test planning, validation, and regression investigation\"\nharness = \"codex\"\nmodel = \"gpt-5.6-luna\"\nreasoning_effort = \"medium\"",
-            "[agents.roles.qa]\ndescription = \"Use for test validation\"\nharness = \"codex\"\nmodel = \"qa-model\"\nreasoning_effort = \"low\"",
-            1,
-        );
+    let mut config: herdr_cadence::config::Config =
+        toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.lead.harness = herdr_cadence::config::Harness::Opencode;
+    config.lead.model = Some("openai/lead-model".into());
+    let qa = config.agents.roles.get_mut("qa").unwrap();
+    qa.description = "Use for test validation".into();
+    qa.model = Some("qa-model".into());
+    qa.reasoning_effort = herdr_cadence::config::ReasoningEffort::Low;
     if use_worktree {
-        config = config.replace(
-            "reasoning_effort = \"low\"\nversion_control_mode = \"shared-checkout\"",
-            "reasoning_effort = \"low\"\nversion_control_mode = \"git-worktree\"",
-        );
+        qa.version_control_mode = herdr_cadence::config::VersionControlMode::GitWorktree;
     }
     if global_yolo {
-        config = config.replacen("yolo = false", "yolo = true", 1);
+        config.yolo = true;
     }
-    toml::from_str::<herdr_cadence::config::Config>(&config).unwrap();
-    fs::write(&config_path, config).unwrap();
+    config.validate().unwrap();
+    fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
     git(repo.path(), &["add", ".herdr/cadence.toml"]);
     git(repo.path(), &["commit", "-m", "enable cadence"]);
     let dirty_path = repo.path().join("uncommitted.txt");

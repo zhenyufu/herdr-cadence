@@ -7,6 +7,66 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_RELATIVE_PATH: &str = ".herdr/cadence.toml";
 pub const GENERALIST_ROLE: &str = "generalist";
+pub const DEFAULT_CONFIG_TOML: &str = r#"schema_version = 1
+enabled = true
+# Give the Lead and every agent unrestricted host access.
+yolo = false
+# Used when no specialized role description is a better match.
+agent_default = "generalist"
+
+[lead]
+# codex | opencode
+harness = "codex"
+# Optional; omit to use the harness default. OpenCode models use provider/model.
+model = "gpt-5.6-terra"
+# default | low | medium | high | xhigh
+reasoning_effort = "high"
+# Maximum concurrent agents; accepted range is 1 through 16.
+max_parallel = 4
+
+[git]
+# Applies only to agents using shared-checkout.
+auto_integrate = true
+# Remove successful agent tabs or worktrees after integration.
+cleanup_on_success = true
+
+# Copy and uncomment this block to add a role. Requests cannot override a role's
+# checkout mode or overlap another active agent's path scope.
+# [agents.roles.new_role]
+# description = "When the Lead should select this role"
+# harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
+# model = "provider/model" # Optional; omit to use the selected harness default.
+# reasoning_effort = "medium" # default | low | medium | high | xhigh
+# version_control_mode = "shared-checkout" # shared-checkout | git-worktree
+
+[agents.roles.generalist]
+description = "Use for general implementation tasks that do not match a specialized role"
+harness = "codex"
+model = "gpt-5.6-terra"
+reasoning_effort = "medium"
+version_control_mode = "git-worktree"
+
+[agents.roles.planner]
+description = "Use for plan mode"
+harness = "codex"
+model = "gpt-5.6-sol"
+reasoning_effort = "xhigh"
+version_control_mode = "shared-checkout"
+
+[agents.roles.qa]
+description = "Use for test planning, validation, and regression investigation"
+harness = "codex"
+model = "gpt-5.6-luna"
+reasoning_effort = "medium"
+version_control_mode = "shared-checkout"
+
+[agents.roles.research]
+description = "Use for investigation and evidence gathering"
+harness = "codex"
+model = "gpt-5.6-sol"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
+"#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -173,8 +233,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let raw = toml::to_string_pretty(&Self::default())?;
-        fs::write(&path, raw)?;
+        fs::write(&path, DEFAULT_CONFIG_TOML)?;
         Ok(path)
     }
 
@@ -385,6 +444,22 @@ mod tests {
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
         assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::GitWorktree);
+    }
+
+    #[test]
+    fn documented_config_matches_init_config() {
+        let generated: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_eq!(generated, Config::default());
+
+        let readme = include_str!("../README.md");
+        let documented = readme
+            .split_once("## Configuration\n\n```toml\n")
+            .unwrap()
+            .1
+            .split_once("\n```")
+            .unwrap()
+            .0;
+        assert_eq!(documented, DEFAULT_CONFIG_TOML.trim_end());
     }
 
     #[test]
