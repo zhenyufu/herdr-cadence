@@ -124,10 +124,11 @@ impl App {
         ];
         let terminal = self
             .herdr
-            .create_lead_tab(&run.base_workspace_id, &self.root, &env)
+            .create_lead_tab(workspace_id, &self.root, &env)
             .context("failed to create the Lead tab")?;
         self.state.update(|store| {
             let stored = active_run_mut(store, &key)?;
+            stored.base_workspace_id = workspace_id.to_string();
             stored.lead.workspace_id = terminal.workspace_id.clone();
             stored.lead.tab_id = Some(terminal.tab_id.clone());
             stored.lead.pane_id = Some(terminal.pane_id.clone());

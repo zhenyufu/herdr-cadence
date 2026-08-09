@@ -430,6 +430,41 @@ fi
     let resumed: serde_json::Value = serde_json::from_slice(&resumed.stdout).unwrap();
     assert_eq!(resumed["status"], "focused");
 
+    fs::remove_file(&lead_started).unwrap();
+    let restarted = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+        .args([
+            "--state-dir",
+            state.path().to_str().unwrap(),
+            "--project-root",
+            repo.path().to_str().unwrap(),
+            "action",
+            "start",
+        ])
+        .env("HERDR_BIN_PATH", &fake)
+        .env("HERDR_WORKSPACE_ID", "resumed-ws")
+        .output()
+        .unwrap();
+    assert!(
+        restarted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restarted.stderr)
+    );
+    let calls = fs::read_to_string(&log).unwrap();
+    assert!(calls.contains("tab create --workspace resumed-ws"));
+    let store: serde_json::Value =
+        serde_json::from_slice(&fs::read(state.path().join("state.json")).unwrap()).unwrap();
+    let project = store["projects"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    let active_run = project["active_run"].as_str().unwrap();
+    assert_eq!(
+        project["runs"][active_run]["base_workspace_id"],
+        "resumed-ws"
+    );
+
     let request = fake_dir.path().join("request.json");
     fs::write(
         &request,
@@ -505,10 +540,10 @@ fi
     assert!(calls.contains("[Lead]"));
     assert_eq!(
         calls.matches("pane process-info --pane pane-lead").count(),
-        2
+        3
     );
     assert!(calls.contains("agent start cadence-lead-"));
-    assert_eq!(calls.matches("agent start cadence-lead-").count(), 2);
+    assert_eq!(calls.matches("agent start cadence-lead-").count(), 3);
     assert!(calls.contains("--kind opencode"));
     assert!(calls.contains(&format!(
         "- qa [{}]: Validates test behavior",
@@ -557,7 +592,11 @@ fi
         assert!(calls.contains("this isolated worktree"));
     } else {
         assert!(!calls.contains("worktree create --cwd"));
-        assert_eq!(calls.matches("tab create --workspace base-ws").count(), 2);
+        assert_eq!(calls.matches("tab create --workspace base-ws").count(), 1);
+        assert_eq!(
+            calls.matches("tab create --workspace resumed-ws").count(),
+            2
+        );
         assert!(calls.contains("--label [QA] Add API --no-focus"));
         assert!(calls.contains("directly share the project checkout"));
         assert!(calls.contains("create exactly one commit for changed files"));
