@@ -97,15 +97,15 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 description = "Implements general changes that do not require a specialized role"
 harness = "codex"
 model = "gpt-5.6-terra"
-reasoning_effort = "high"
+reasoning_effort = "medium"
 version_control_mode = "shared-checkout"
 
 # Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
-description = "Plans complex work and identifies dependencies, risks, and acceptance criteria"
+description = "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md"
 harness = "codex"
 model = "gpt-5.6-sol"
-reasoning_effort = "xhigh"
+reasoning_effort = "high" # "xhigh" # for difficult architecture
 version_control_mode = "shared-checkout"
 
 [agents.roles.researcher]
@@ -125,7 +125,7 @@ version_control_mode = "git-worktree"
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
 harness = "codex"
-model = "gpt-5.6-luna"
+model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 version_control_mode = "shared-checkout"
 ```

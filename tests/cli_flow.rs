@@ -103,7 +103,7 @@ fn enables_and_reports_project_status() {
     assert_eq!(generalist.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(
         generalist.reasoning_effort,
-        herdr_cadence::config::ReasoningEffort::High
+        herdr_cadence::config::ReasoningEffort::Medium
     );
     assert!(!parsed.yolo);
     assert_eq!(
@@ -193,7 +193,7 @@ fn validates_and_resolves_project_config() {
     assert!(roles.iter().any(|role| role["name"] == "researcher"));
     let planner = roles.iter().find(|role| role["name"] == "planner").unwrap();
     assert_eq!(planner["model"], "gpt-5.6-sol");
-    assert_eq!(planner["reasoning_effort"], "xhigh");
+    assert_eq!(planner["reasoning_effort"], "high");
     assert_eq!(planner["version_control_mode"], "shared-checkout");
     assert!(roles.iter().any(|role| {
         role["name"] == "researcher" && role["version_control_mode"] == "shared-checkout"

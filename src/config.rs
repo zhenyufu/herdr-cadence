@@ -37,15 +37,15 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 description = "Implements general changes that do not require a specialized role"
 harness = "codex"
 model = "gpt-5.6-terra"
-reasoning_effort = "high"
+reasoning_effort = "medium"
 version_control_mode = "shared-checkout"
 
 # Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
-description = "Plans complex work and identifies dependencies, risks, and acceptance criteria"
+description = "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md"
 harness = "codex"
 model = "gpt-5.6-sol"
-reasoning_effort = "xhigh"
+reasoning_effort = "high" # "xhigh" # for difficult architecture
 version_control_mode = "shared-checkout"
 
 [agents.roles.researcher]
@@ -65,7 +65,7 @@ version_control_mode = "git-worktree"
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
 harness = "codex"
-model = "gpt-5.6-luna"
+model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 version_control_mode = "shared-checkout"
 "#;
@@ -356,19 +356,17 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                     .into(),
                 harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-terra".into()),
-                reasoning_effort: ReasoningEffort::High,
+                reasoning_effort: ReasoningEffort::Medium,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
         (
             "planner".into(),
             RoleConfig {
-                description:
-                    "Plans complex work and identifies dependencies, risks, and acceptance criteria"
-                        .into(),
+                description: "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md".into(),
                 harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-sol".into()),
-                reasoning_effort: ReasoningEffort::Xhigh,
+                reasoning_effort: ReasoningEffort::High,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -399,7 +397,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                 description: "Validates behavior, tests changes, and investigates regressions"
                     .into(),
                 harness: AgentHarness::Codex,
-                model: Some("gpt-5.6-luna".into()),
+                model: Some("gpt-5.6-terra".into()),
                 reasoning_effort: ReasoningEffort::Medium,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
@@ -456,7 +454,7 @@ mod tests {
         let generalist = parsed.agents.role(GENERALIST_ROLE).unwrap();
         assert_eq!(generalist.1, AgentHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
-        assert_eq!(generalist.3, ReasoningEffort::High);
+        assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::SharedCheckout);
     }
 
@@ -587,7 +585,7 @@ mod tests {
         let generalist = config.agents.role(GENERALIST_ROLE).unwrap();
         assert_eq!(generalist.1, AgentHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
-        assert_eq!(generalist.3, ReasoningEffort::High);
+        assert_eq!(generalist.3, ReasoningEffort::Medium);
         assert_eq!(generalist.4, VersionControlMode::SharedCheckout);
 
         let researcher = config.agents.role("researcher").unwrap();
