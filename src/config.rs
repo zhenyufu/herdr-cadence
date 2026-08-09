@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_RELATIVE_PATH: &str = ".herdr/cadence.toml";
+pub const CONFIG_RELATIVE_PATH: &str = ".cadence.toml";
 pub const GENERALIST_ROLE: &str = "generalist";
 pub const DEFAULT_CONFIG_TOML: &str = r#"schema_version = 1
 enabled = true

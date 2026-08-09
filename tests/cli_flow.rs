@@ -73,7 +73,7 @@ fn enables_and_reports_project_status() {
         "{}",
         String::from_utf8_lossy(&enabled.stderr)
     );
-    let config = fs::read_to_string(repo.path().join(".herdr/cadence.toml")).unwrap();
+    let config = fs::read_to_string(repo.path().join(".cadence.toml")).unwrap();
     assert!(config.contains("harness = \"codex\""));
     assert!(config.contains("model = \"gpt-5.6-terra\""));
     assert!(config.contains("reasoning_effort = \"high\""));
@@ -110,6 +110,7 @@ fn enables_and_reports_project_status() {
         generalist.version_control_mode,
         herdr_cadence::config::VersionControlMode::SharedCheckout
     );
+    assert!(!repo.path().join(".herdr").exists());
     assert!(!repo.path().join("AGENTS.md").exists());
 
     let status = cadence(repo.path(), state.path(), &["action", "status"]);
@@ -130,7 +131,7 @@ fn reports_config_parse_error_causes() {
             .status
             .success()
     );
-    let config_path = repo.path().join(".herdr/cadence.toml");
+    let config_path = repo.path().join(".cadence.toml");
     let config = fs::read_to_string(&config_path).unwrap().replacen(
         "harness = \"codex\"",
         "harness = \"invalid\"",
@@ -214,7 +215,7 @@ fn rejects_agent_checkout_overrides() {
             .status
             .success()
     );
-    git(repo.path(), &["add", ".herdr/cadence.toml"]);
+    git(repo.path(), &["add", ".cadence.toml"]);
     git(repo.path(), &["commit", "-m", "enable cadence"]);
     let request = state.path().join("request.json");
     fs::write(
@@ -272,7 +273,7 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
             .status
             .success()
     );
-    let config_path = repo.path().join(".herdr/cadence.toml");
+    let config_path = repo.path().join(".cadence.toml");
     let mut config: herdr_cadence::config::Config =
         toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
     config.lead.harness = herdr_cadence::config::Harness::Opencode;
@@ -289,7 +290,7 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
     }
     config.validate().unwrap();
     fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
-    git(repo.path(), &["add", ".herdr/cadence.toml"]);
+    git(repo.path(), &["add", ".cadence.toml"]);
     git(repo.path(), &["commit", "-m", "enable cadence"]);
     let dirty_path = repo.path().join("uncommitted.txt");
     if dirty_at_start {

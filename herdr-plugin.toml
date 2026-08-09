@@ -14,7 +14,7 @@ command = ["bin/herdr-cadence", "startup"]
 [[actions]]
 id = "init"
 title = "Cadence: Initialize project"
-description = "Create .herdr/cadence.toml in the current Git repository"
+description = "Create .cadence.toml in the current Git repository"
 contexts = ["workspace"]
 command = ["bin/herdr-cadence", "action", "init"]
 

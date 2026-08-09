@@ -21,7 +21,7 @@ Init a cadence config inside the target repository's Herdr workspace:
 herdr plugin action invoke herdr-cadence.init
 ```
 
-Edit and commit `.herdr/cadence.toml`, then start the conversational Lead:
+Edit and commit `.cadence.toml`, then start the conversational Lead:
 
 ```sh
 herdr plugin action invoke herdr-cadence.start
@@ -64,7 +64,7 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 
 ## Configuration
 
-`init` writes `.herdr/cadence.toml` from the [canonical initial configuration](src/config.rs).
+`init` writes `.cadence.toml` from the [canonical initial configuration](src/config.rs).
 
 ```toml
 schema_version = 1
