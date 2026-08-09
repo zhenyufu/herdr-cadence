@@ -64,6 +64,8 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 
 ## Configuration
 
+`init` writes `.herdr/cadence.toml` from the [canonical initial configuration](src/config.rs).
+
 ```toml
 schema_version = 1
 enabled = true
@@ -91,35 +93,35 @@ cleanup_on_success = true
 # Copy and uncomment this block to add a role. Requests cannot override a role's
 # checkout mode or overlap another active agent's path scope.
 # [agents.roles.new_role]
-# description = "When the Lead should select this role"
+# description = "Handles work that matches this role's specialty"
 # harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
 # model = "provider/model" # Optional; omit to use the selected harness default.
 # reasoning_effort = "medium" # default | low | medium | high | xhigh
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
 
 [agents.roles.generalist]
-description = "Use for general implementation tasks that do not match a specialized role"
+description = "Implements general changes that do not require a specialized role"
 harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 version_control_mode = "git-worktree"
 
 [agents.roles.planner]
-description = "Use for plan mode"
+description = "Plans complex work and identifies dependencies, risks, and acceptance criteria"
 harness = "codex"
 model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 version_control_mode = "shared-checkout"
 
 [agents.roles.qa]
-description = "Use for test planning, validation, and regression investigation"
+description = "Validates behavior, tests changes, and investigates regressions"
 harness = "codex"
 model = "gpt-5.6-luna"
 reasoning_effort = "medium"
 version_control_mode = "shared-checkout"
 
 [agents.roles.research]
-description = "Use for investigation and evidence gathering"
+description = "Investigates questions and gathers evidence before implementation"
 harness = "codex"
 model = "gpt-5.6-sol"
 reasoning_effort = "high"

@@ -81,7 +81,7 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("version_control_mode = \"shared-checkout\""));
     assert!(config.contains("agent_default = \"generalist\""));
     assert!(config.contains("[agents.roles.generalist]"));
-    assert!(config.contains("description = \"Use for general implementation tasks"));
+    assert!(config.contains("description = \"Implements general changes"));
     assert!(config.contains("[agents.roles.planner]"));
     assert!(!config.contains("[agents.roles.planning]"));
     assert!(config.contains("[agents.roles.research]"));
@@ -277,7 +277,7 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
     config.lead.harness = herdr_cadence::config::Harness::Opencode;
     config.lead.model = Some("openai/lead-model".into());
     let qa = config.agents.roles.get_mut("qa").unwrap();
-    qa.description = "Use for test validation".into();
+    qa.description = "Validates test behavior".into();
     qa.model = Some("qa-model".into());
     qa.reasoning_effort = herdr_cadence::config::ReasoningEffort::Low;
     if use_worktree {
@@ -307,7 +307,7 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
 printf '%s\n' "$*" >> '{}'
 if [ "$1 $2" = "agent get" ]; then
   case "$3" in
-    cadence-*-a*)
+    cadence-??????-a*)
       printf '%s\n' '{{"id":"test","result":{{}}}}'
       exit 0
       ;;
@@ -505,7 +505,7 @@ fi
     );
     assert!(calls.contains("--kind opencode"));
     assert!(calls.contains(&format!(
-        "- qa [{}]: Use for test validation",
+        "- qa [{}]: Validates test behavior",
         if use_worktree {
             "git-worktree"
         } else {
@@ -575,7 +575,7 @@ fi
         assert!(!calls.contains("--dangerously-bypass-approvals-and-sandbox"));
     }
     assert!(calls.contains("Role: qa"));
-    assert!(calls.contains("Role guidance: Use for test validation"));
+    assert!(calls.contains("Role guidance: Validates test behavior"));
     assert!(calls.contains("agent prompt"));
 
     let checkout = if use_worktree {
