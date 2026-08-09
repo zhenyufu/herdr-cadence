@@ -11,27 +11,21 @@ pub const DEFAULT_CONFIG_TOML: &str = r#"schema_version = 1
 enabled = true
 # Give the Lead and every agent unrestricted host access.
 yolo = false
-# Used when no specialized role description is a better match.
-agent_default = "generalist"
+agent_default = "generalist" # default role when no better match
 
 [lead]
-# codex | opencode
 harness = "codex"
-# Optional; omit to use the harness default. OpenCode models use provider/model.
 model = "gpt-5.6-terra"
-# default | low | medium | high | xhigh
 reasoning_effort = "high"
-# Maximum concurrent agents; accepted range is 1 through 16.
-max_parallel = 4
+max_parallel = 4 # Maximum concurrent agents; 1-16
 
 [git]
-# Applies only to agents using shared-checkout.
-auto_integrate = true
-# Remove successful agent tabs or worktrees after integration.
-cleanup_on_success = true
+auto_integrate = true # Applies only to agents using shared-checkout.
+cleanup_on_success = true # Remove successful agent tabs or worktrees after integration.
 
 # Copy and uncomment this block to add a role. Requests cannot override a role's
 # checkout mode or overlap another active agent's path scope.
+
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
 # harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
@@ -43,9 +37,10 @@ cleanup_on_success = true
 description = "Implements general changes that do not require a specialized role"
 harness = "codex"
 model = "gpt-5.6-terra"
-reasoning_effort = "medium"
-version_control_mode = "git-worktree"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
 
+# Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
 description = "Plans complex work and identifies dependencies, risks, and acceptance criteria"
 harness = "codex"
@@ -53,18 +48,25 @@ model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 version_control_mode = "shared-checkout"
 
+[agents.roles.researcher]
+description = "Investigates questions and gathers evidence before implementation"
+harness = "codex"
+model = "gpt-5.6-terra"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
+
+[agents.roles.developer]
+description = "Writes code"
+harness = "codex"
+model = "gpt-5.6-terra"
+reasoning_effort = "medium"
+version_control_mode = "git-worktree"
+
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
 harness = "codex"
 model = "gpt-5.6-luna"
 reasoning_effort = "medium"
-version_control_mode = "shared-checkout"
-
-[agents.roles.research]
-description = "Investigates questions and gathers evidence before implementation"
-harness = "codex"
-model = "gpt-5.6-sol"
-reasoning_effort = "high"
 version_control_mode = "shared-checkout"
 "#;
 
@@ -354,8 +356,8 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
                     .into(),
                 harness: AgentHarness::Codex,
                 model: Some("gpt-5.6-terra".into()),
-                reasoning_effort: ReasoningEffort::Medium,
-                version_control_mode: VersionControlMode::GitWorktree,
+                reasoning_effort: ReasoningEffort::High,
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
         (
@@ -371,14 +373,24 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             },
         ),
         (
-            "research".into(),
+            "researcher".into(),
             RoleConfig {
                 description: "Investigates questions and gathers evidence before implementation"
                     .into(),
                 harness: AgentHarness::Codex,
-                model: Some("gpt-5.6-sol".into()),
+                model: Some("gpt-5.6-terra".into()),
                 reasoning_effort: ReasoningEffort::High,
                 version_control_mode: VersionControlMode::SharedCheckout,
+            },
+        ),
+        (
+            "developer".into(),
+            RoleConfig {
+                description: "Writes code".into(),
+                harness: AgentHarness::Codex,
+                model: Some("gpt-5.6-terra".into()),
+                reasoning_effort: ReasoningEffort::Medium,
+                version_control_mode: VersionControlMode::GitWorktree,
             },
         ),
         (
@@ -444,8 +456,8 @@ mod tests {
         let generalist = parsed.agents.role(GENERALIST_ROLE).unwrap();
         assert_eq!(generalist.1, AgentHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
-        assert_eq!(generalist.3, ReasoningEffort::Medium);
-        assert_eq!(generalist.4, VersionControlMode::GitWorktree);
+        assert_eq!(generalist.3, ReasoningEffort::High);
+        assert_eq!(generalist.4, VersionControlMode::SharedCheckout);
     }
 
     #[test]
@@ -562,11 +574,11 @@ mod tests {
     fn resolves_fully_configured_roles() {
         let mut config = Config::default();
         config.agents.roles.insert(
-            "research".into(),
+            "researcher".into(),
             RoleConfig {
                 description: "Investigate options and gather evidence".into(),
                 harness: AgentHarness::Opencode,
-                model: Some("research-model".into()),
+                model: Some("researcher-model".into()),
                 reasoning_effort: ReasoningEffort::Low,
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
@@ -575,20 +587,20 @@ mod tests {
         let generalist = config.agents.role(GENERALIST_ROLE).unwrap();
         assert_eq!(generalist.1, AgentHarness::Codex);
         assert_eq!(generalist.2, Some("gpt-5.6-terra"));
-        assert_eq!(generalist.3, ReasoningEffort::Medium);
-        assert_eq!(generalist.4, VersionControlMode::GitWorktree);
+        assert_eq!(generalist.3, ReasoningEffort::High);
+        assert_eq!(generalist.4, VersionControlMode::SharedCheckout);
 
-        let research = config.agents.role("research").unwrap();
-        assert_eq!(research.0, "Investigate options and gather evidence");
-        assert_eq!(research.1, AgentHarness::Opencode);
-        assert_eq!(research.2, Some("research-model"));
-        assert_eq!(research.3, ReasoningEffort::Low);
-        assert_eq!(research.4, VersionControlMode::SharedCheckout);
+        let researcher = config.agents.role("researcher").unwrap();
+        assert_eq!(researcher.0, "Investigate options and gather evidence");
+        assert_eq!(researcher.1, AgentHarness::Opencode);
+        assert_eq!(researcher.2, Some("researcher-model"));
+        assert_eq!(researcher.3, ReasoningEffort::Low);
+        assert_eq!(researcher.4, VersionControlMode::SharedCheckout);
         assert!(
             config
                 .agents
                 .role_catalog()
-                .contains("- research [shared-checkout]:")
+                .contains("- researcher [shared-checkout]:")
         );
         assert!(config.validate().is_ok());
 

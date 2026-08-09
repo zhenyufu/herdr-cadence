@@ -1102,7 +1102,7 @@ fn display_role(role: &str) -> String {
     if role.eq_ignore_ascii_case("qa") {
         return "QA".into();
     }
-    if role.eq_ignore_ascii_case("research") || role.eq_ignore_ascii_case("researcher") {
+    if role.eq_ignore_ascii_case("researcher") {
         return "Researcher".into();
     }
     role.split(|character: char| !character.is_alphanumeric())
@@ -1128,7 +1128,7 @@ mod tests {
 
     #[test]
     fn formats_agent_roles_for_labels() {
-        assert_eq!(display_role("research"), "Researcher");
+        assert_eq!(display_role("researcher"), "Researcher");
         assert_eq!(display_role("qa"), "QA");
         assert_eq!(display_role("docs_writer"), "Docs Writer");
     }

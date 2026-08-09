@@ -84,7 +84,8 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("description = \"Implements general changes"));
     assert!(config.contains("[agents.roles.planner]"));
     assert!(!config.contains("[agents.roles.planning]"));
-    assert!(config.contains("[agents.roles.research]"));
+    assert!(config.contains("[agents.roles.researcher]"));
+    assert!(config.contains("[agents.roles.developer]"));
     assert!(config.contains("[agents.roles.qa]"));
     assert!(config.find("[git]").unwrap() < config.find("[agents.roles.").unwrap());
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
@@ -102,12 +103,12 @@ fn enables_and_reports_project_status() {
     assert_eq!(generalist.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(
         generalist.reasoning_effort,
-        herdr_cadence::config::ReasoningEffort::Medium
+        herdr_cadence::config::ReasoningEffort::High
     );
     assert!(!parsed.yolo);
     assert_eq!(
         generalist.version_control_mode,
-        herdr_cadence::config::VersionControlMode::GitWorktree
+        herdr_cadence::config::VersionControlMode::SharedCheckout
     );
     assert!(!repo.path().join("AGENTS.md").exists());
 
@@ -189,13 +190,13 @@ fn validates_and_resolves_project_config() {
     let roles = value["roles"].as_array().unwrap();
     assert!(roles.iter().any(|role| role["name"] == "generalist"));
     assert!(roles.iter().any(|role| role["name"] == "qa"));
-    assert!(roles.iter().any(|role| role["name"] == "research"));
+    assert!(roles.iter().any(|role| role["name"] == "researcher"));
     let planner = roles.iter().find(|role| role["name"] == "planner").unwrap();
     assert_eq!(planner["model"], "gpt-5.6-sol");
     assert_eq!(planner["reasoning_effort"], "xhigh");
     assert_eq!(planner["version_control_mode"], "shared-checkout");
     assert!(roles.iter().any(|role| {
-        role["name"] == "research" && role["version_control_mode"] == "shared-checkout"
+        role["name"] == "researcher" && role["version_control_mode"] == "shared-checkout"
     }));
     assert!(
         roles.iter().any(|role| {
@@ -673,7 +674,7 @@ fi
 
     fs::write(
         &request,
-        r#"{"title":"Update docs","task":"Update the docs","scope":["docs"],"acceptance":["Docs are current"],"role":"research"}"#,
+        r#"{"title":"Update docs","task":"Update the docs","scope":["docs"],"acceptance":["Docs are current"],"role":"researcher"}"#,
     )
     .unwrap();
     let follow_up = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))

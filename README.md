@@ -71,27 +71,21 @@ schema_version = 1
 enabled = true
 # Give the Lead and every agent unrestricted host access.
 yolo = false
-# Used when no specialized role description is a better match.
-agent_default = "generalist"
+agent_default = "generalist" # default role when no better match
 
 [lead]
-# codex | opencode
 harness = "codex"
-# Optional; omit to use the harness default. OpenCode models use provider/model.
 model = "gpt-5.6-terra"
-# default | low | medium | high | xhigh
 reasoning_effort = "high"
-# Maximum concurrent agents; accepted range is 1 through 16.
-max_parallel = 4
+max_parallel = 4 # Maximum concurrent agents; 1-16
 
 [git]
-# Applies only to agents using shared-checkout.
-auto_integrate = true
-# Remove successful agent tabs or worktrees after integration.
-cleanup_on_success = true
+auto_integrate = true # Applies only to agents using shared-checkout.
+cleanup_on_success = true # Remove successful agent tabs or worktrees after integration.
 
 # Copy and uncomment this block to add a role. Requests cannot override a role's
 # checkout mode or overlap another active agent's path scope.
+
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
 # harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
@@ -103,9 +97,10 @@ cleanup_on_success = true
 description = "Implements general changes that do not require a specialized role"
 harness = "codex"
 model = "gpt-5.6-terra"
-reasoning_effort = "medium"
-version_control_mode = "git-worktree"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
 
+# Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
 description = "Plans complex work and identifies dependencies, risks, and acceptance criteria"
 harness = "codex"
@@ -113,18 +108,25 @@ model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 version_control_mode = "shared-checkout"
 
+[agents.roles.researcher]
+description = "Investigates questions and gathers evidence before implementation"
+harness = "codex"
+model = "gpt-5.6-terra"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
+
+[agents.roles.developer]
+description = "Writes code"
+harness = "codex"
+model = "gpt-5.6-terra"
+reasoning_effort = "medium"
+version_control_mode = "git-worktree"
+
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
 harness = "codex"
 model = "gpt-5.6-luna"
 reasoning_effort = "medium"
-version_control_mode = "shared-checkout"
-
-[agents.roles.research]
-description = "Investigates questions and gathers evidence before implementation"
-harness = "codex"
-model = "gpt-5.6-sol"
-reasoning_effort = "high"
 version_control_mode = "shared-checkout"
 ```
 
