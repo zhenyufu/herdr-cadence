@@ -302,6 +302,7 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
     let log = fake_dir.path().join("calls.log");
     let busy_once = fake_dir.path().join("busy-once");
     let shell_ready_once = fake_dir.path().join("shell-ready-once");
+    let lead_started = fake_dir.path().join("lead-started");
     let agent_path = fake_dir.path().join("agent");
     fs::create_dir(&agent_path).unwrap();
     let script = format!(
@@ -309,6 +310,12 @@ fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
 printf '%s\n' "$*" >> '{}'
 if [ "$1 $2" = "agent get" ]; then
   case "$3" in
+    cadence-lead-*)
+      if [ -e '{}' ]; then
+        printf '%s\n' '{{"id":"test","result":{{}}}}'
+        exit 0
+      fi
+      ;;
     cadence-??????-a*)
       printf '%s\n' '{{"id":"test","result":{{}}}}'
       exit 0
@@ -334,6 +341,9 @@ case "$*" in
     fi
     ;;
 esac
+case "$*" in
+  "agent start cadence-lead-"*) : > '{}' ;;
+esac
 if [ "$1 $2" = "workspace create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"lead-ws"}},"tab":{{"tab_id":"tab-lead"}},"root_pane":{{"pane_id":"pane-lead"}}}}}}'
 elif [ "$1 $2" = "tab create" ]; then
@@ -352,10 +362,12 @@ else
 fi
 "#,
         log.display(),
+        lead_started.display(),
         shell_ready_once.display(),
         shell_ready_once.display(),
         busy_once.display(),
         busy_once.display(),
+        lead_started.display(),
         agent_path.display(),
         repo.path().display(),
         agent_path.display()
@@ -395,28 +407,28 @@ fi
         .unwrap();
     let active_run = project["active_run"].as_str().unwrap();
     let run = &project["runs"][active_run];
-    assert_eq!(run["base_workspace_id"], "lead-ws");
-    assert_eq!(run["lead"]["workspace_id"], "lead-ws");
-    if use_worktree {
-        let resumed = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
-            .args([
-                "--state-dir",
-                state.path().to_str().unwrap(),
-                "--project-root",
-                repo.path().to_str().unwrap(),
-                "action",
-                "start",
-            ])
-            .env("HERDR_BIN_PATH", &fake)
-            .env("HERDR_WORKSPACE_ID", "base-ws")
-            .output()
-            .unwrap();
-        assert!(
-            resumed.status.success(),
-            "{}",
-            String::from_utf8_lossy(&resumed.stderr)
-        );
-    }
+    assert_eq!(run["base_workspace_id"], "base-ws");
+    assert_eq!(run["lead"]["workspace_id"], "base-ws");
+    let resumed = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+        .args([
+            "--state-dir",
+            state.path().to_str().unwrap(),
+            "--project-root",
+            repo.path().to_str().unwrap(),
+            "action",
+            "start",
+        ])
+        .env("HERDR_BIN_PATH", &fake)
+        .env("HERDR_WORKSPACE_ID", "base-ws")
+        .output()
+        .unwrap();
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let resumed: serde_json::Value = serde_json::from_slice(&resumed.stdout).unwrap();
+    assert_eq!(resumed["status"], "focused");
 
     let request = fake_dir.path().join("request.json");
     fs::write(
@@ -488,23 +500,15 @@ fi
     }
 
     let calls = fs::read_to_string(&log).unwrap();
-    assert!(calls.contains(&format!(
-        "workspace create --cwd {} --label [Lead] {}",
-        repo.path().canonicalize().unwrap().display(),
-        repo.path().file_name().unwrap().to_string_lossy()
-    )));
-    assert_eq!(calls.matches("workspace create --cwd").count(), 1);
-    assert!(calls.contains("tab rename tab-lead"));
+    assert!(!calls.contains("workspace create --cwd"));
+    assert!(!calls.contains("tab rename tab-lead"));
     assert!(calls.contains("[Lead]"));
     assert_eq!(
         calls.matches("pane process-info --pane pane-lead").count(),
-        if use_worktree { 3 } else { 2 }
+        2
     );
     assert!(calls.contains("agent start cadence-lead-"));
-    assert_eq!(
-        calls.matches("agent start cadence-lead-").count(),
-        if use_worktree { 3 } else { 2 }
-    );
+    assert_eq!(calls.matches("agent start cadence-lead-").count(), 2);
     assert!(calls.contains("--kind opencode"));
     assert!(calls.contains(&format!(
         "- qa [{}]: Validates test behavior",
@@ -540,8 +544,7 @@ fi
     }
     assert!(calls.contains("Each role's configured version_control_mode fixes its checkout"));
     if use_worktree {
-        assert!(calls.contains("workspace get lead-ws"));
-        assert!(calls.contains("tab create --workspace lead-ws"));
+        assert_eq!(calls.matches("tab create --workspace base-ws").count(), 1);
         assert!(calls.contains(&format!(
             "--label [Lead] {} --focus",
             repo.path().file_name().unwrap().to_string_lossy()
@@ -554,7 +557,7 @@ fi
         assert!(calls.contains("this isolated worktree"));
     } else {
         assert!(!calls.contains("worktree create --cwd"));
-        assert!(calls.contains("tab create --workspace lead-ws"));
+        assert_eq!(calls.matches("tab create --workspace base-ws").count(), 2);
         assert!(calls.contains("--label [QA] Add API --no-focus"));
         assert!(calls.contains("directly share the project checkout"));
         assert!(calls.contains("create exactly one commit for changed files"));

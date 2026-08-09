@@ -125,30 +125,6 @@ impl Herdr {
         Ok(terminal)
     }
 
-    pub fn create_lead_workspace(
-        &self,
-        root: &Path,
-        env: &[(&str, String)],
-    ) -> Result<CreatedTerminal> {
-        let label = lead_label(root);
-        let mut args = vec![
-            "workspace".to_string(),
-            "create".into(),
-            "--cwd".into(),
-            root.display().to_string(),
-            "--label".into(),
-            label.clone(),
-            "--focus".into(),
-        ];
-        for (key, value) in env {
-            args.push("--env".into());
-            args.push(format!("{key}={value}"));
-        }
-        let terminal = parse_created(&self.checked(args)?)?;
-        self.checked(["tab", "rename", &terminal.tab_id, &label])?;
-        Ok(terminal)
-    }
-
     pub fn create_agent_worktree(
         &self,
         root: &Path,

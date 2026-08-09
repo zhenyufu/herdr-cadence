@@ -122,26 +122,13 @@ impl App {
             ("CADENCE_PROJECT_ROOT", self.root.display().to_string()),
             ("CADENCE_RUN_ID", run.id.clone()),
         ];
-        let existing_workspace = run
-            .lead
-            .workspace_id
-            .as_deref()
-            .filter(|id| self.herdr.workspace_exists(id));
-        let terminal = if let Some(workspace_id) = existing_workspace {
-            self.herdr
-                .create_lead_tab(workspace_id, &self.root, &env)
-                .context("failed to create the Lead tab")?
-        } else {
-            self.herdr
-                .create_lead_workspace(&self.root, &env)
-                .context("failed to create the Lead workspace")?
-        };
+        let terminal = self
+            .herdr
+            .create_lead_tab(&run.base_workspace_id, &self.root, &env)
+            .context("failed to create the Lead tab")?;
         self.state.update(|store| {
             let stored = active_run_mut(store, &key)?;
-            if let Some(workspace_id) = terminal.workspace_id.clone() {
-                stored.base_workspace_id = workspace_id.clone();
-                stored.lead.workspace_id = Some(workspace_id);
-            }
+            stored.lead.workspace_id = terminal.workspace_id.clone();
             stored.lead.tab_id = Some(terminal.tab_id.clone());
             stored.lead.pane_id = Some(terminal.pane_id.clone());
             Ok(())
