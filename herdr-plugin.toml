@@ -1,6 +1,6 @@
 id = "herdr-cadence"
 name = "Cadence"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.7.5"
 description = "Orchestrate Codex and OpenCode agents in shared or isolated Git checkouts"
 platforms = ["linux", "macos"]
