@@ -4,7 +4,8 @@ Cadence is a light Orchestrating plugin for Herdr that provides one **Lead** and
 ## Supported harness
 Supported:
 * Codex
-Untested:
+  
+Supported but untested:
 * Opencode
 
 ## Install and usage
