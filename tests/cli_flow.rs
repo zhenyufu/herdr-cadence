@@ -661,7 +661,13 @@ fi
     assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
     assert!(calls.contains("Handle trivial, low-risk work directly"));
     assert!(calls.contains("Never directly edit a path reserved by an active agent"));
-    assert!(calls.contains("When an agent comes back with work, make a local commit"));
+    assert!(calls.contains(
+        "After completing and verifying each coherent user-requested change block, stage only task-related paths and create a local commit"
+    ));
+    assert!(calls.contains("This applies to Lead-authored and integrated agent work"));
+    assert!(
+        calls.contains("Preserve unrelated working-tree changes; push only when the user asks")
+    );
     assert_eq!(
         calls.contains("The base checkout has uncommitted changes"),
         dirty_at_start
