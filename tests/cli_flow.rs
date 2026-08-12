@@ -79,8 +79,11 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("reasoning_effort = \"high\""));
     assert!(config.contains("version_control_mode = \"git-worktree\""));
     assert!(config.contains("version_control_mode = \"shared-checkout\""));
+    assert!(config.contains("schema_version = 2"));
     assert!(config.contains("agent_default = \"generalist\""));
     assert!(config.contains("[agents.roles.generalist]"));
+    assert!(config.contains("runners = [\"codex-medium\", \"claude-medium\"]"));
+    assert!(config.contains("[agents.runners.codex-medium]"));
     assert!(config.contains("description = \"Implements general changes"));
     assert!(config.contains("[agents.roles.planner]"));
     assert!(!config.contains("[agents.roles.planning]"));
@@ -94,17 +97,13 @@ fn enables_and_reports_project_status() {
             .agents
             .roles
             .values()
-            .all(|role| role.harness != herdr_cadence::config::AgentHarness::Inherit)
+            .all(|role| !role.runners.is_empty())
     );
     assert_eq!(parsed.lead.max_parallel, Some(4));
     assert_eq!(parsed.lead.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(parsed.agent_default, "generalist");
     let generalist = parsed.agents.roles.get("generalist").unwrap();
-    assert_eq!(generalist.model.as_deref(), Some("gpt-5.6-terra"));
-    assert_eq!(
-        generalist.reasoning_effort,
-        herdr_cadence::config::ReasoningEffort::Medium
-    );
+    assert_eq!(generalist.runners[0], "codex-medium");
     assert!(!parsed.yolo);
     assert_eq!(
         generalist.version_control_mode,
@@ -193,8 +192,9 @@ fn validates_and_resolves_project_config() {
     assert!(roles.iter().any(|role| role["name"] == "qa"));
     assert!(roles.iter().any(|role| role["name"] == "researcher"));
     let planner = roles.iter().find(|role| role["name"] == "planner").unwrap();
-    assert_eq!(planner["model"], "gpt-5.6-sol");
-    assert_eq!(planner["reasoning_effort"], "high");
+    assert_eq!(planner["runners"][0]["name"], "codex-planning");
+    assert_eq!(planner["runners"][0]["model"], "gpt-5.6-sol");
+    assert_eq!(planner["runners"][0]["reasoning_effort"], "high");
     assert_eq!(planner["version_control_mode"], "shared-checkout");
     assert!(roles.iter().any(|role| {
         role["name"] == "researcher" && role["version_control_mode"] == "shared-checkout"
@@ -246,28 +246,66 @@ fn rejects_agent_checkout_overrides() {
 }
 
 #[test]
+fn rejects_agent_runner_overrides() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    assert!(
+        cadence(repo.path(), state.path(), &["action", "init"])
+            .status
+            .success()
+    );
+    git(repo.path(), &["add", ".cadence.toml"]);
+    git(repo.path(), &["commit", "-m", "enable cadence"]);
+    let request = state.path().join("request.json");
+    fs::write(
+        &request,
+        r#"{"title":"Review API","task":"Review the API","scope":["src/api"],"acceptance":["Review complete"],"harness":"claude"}"#,
+    )
+    .unwrap();
+
+    let spawned = cadence(
+        repo.path(),
+        state.path(),
+        &[
+            "agent",
+            "spawn",
+            "--request-file",
+            request.to_str().unwrap(),
+        ],
+    );
+
+    assert!(!spawned.status.success());
+    assert!(String::from_utf8_lossy(&spawned.stderr).contains("harness"));
+}
+
+#[test]
 fn runs_agent_in_shared_checkout_by_default() {
-    run_agent_flow(false, false, false, false);
+    run_agent_flow(false, false, false, false, false);
 }
 
 #[test]
 fn runs_agent_in_configured_worktree() {
-    run_agent_flow(true, false, false, false);
+    run_agent_flow(true, false, false, false, false);
 }
 
 #[test]
 fn runs_every_agent_in_global_yolo() {
-    run_agent_flow(false, true, false, false);
+    run_agent_flow(false, true, false, false, false);
 }
 
 #[test]
 fn starts_dirty_but_blocks_agents_until_clean() {
-    run_agent_flow(true, false, true, false);
+    run_agent_flow(true, false, true, false, false);
 }
 
 #[test]
 fn rejects_an_earlier_out_of_scope_shared_checkout_commit() {
-    run_agent_flow(false, false, false, true);
+    run_agent_flow(false, false, false, true, false);
+}
+
+#[test]
+fn falls_back_to_the_next_runner_after_credit_exhaustion() {
+    run_agent_flow(false, false, false, false, true);
 }
 
 fn run_agent_flow(
@@ -275,6 +313,7 @@ fn run_agent_flow(
     global_yolo: bool,
     dirty_at_start: bool,
     create_out_of_scope_commit: bool,
+    force_primary_credit_failure: bool,
 ) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
@@ -288,13 +327,30 @@ fn run_agent_flow(
         toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
     config.lead.harness = herdr_cadence::config::Harness::Opencode;
     config.lead.model = Some("openai/lead-model".into());
-    let qa = config.agents.roles.get_mut("qa").unwrap();
-    qa.description = "Validates test behavior".into();
-    qa.model = Some("qa-model".into());
-    qa.reasoning_effort = herdr_cadence::config::ReasoningEffort::Low;
-    if use_worktree {
-        qa.version_control_mode = herdr_cadence::config::VersionControlMode::GitWorktree;
+    {
+        let qa = config.agents.roles.get_mut("qa").unwrap();
+        qa.description = "Validates test behavior".into();
+        qa.runners = vec!["qa-primary".into(), "qa-backup".into()];
+        if use_worktree {
+            qa.version_control_mode = herdr_cadence::config::VersionControlMode::GitWorktree;
+        }
     }
+    config.agents.runners.insert(
+        "qa-primary".into(),
+        herdr_cadence::config::RunnerConfig {
+            harness: herdr_cadence::config::Harness::Codex,
+            model: Some("qa-model".into()),
+            reasoning_effort: herdr_cadence::config::ReasoningEffort::Low,
+        },
+    );
+    config.agents.runners.insert(
+        "qa-backup".into(),
+        herdr_cadence::config::RunnerConfig {
+            harness: herdr_cadence::config::Harness::Claude,
+            model: Some("backup-model".into()),
+            reasoning_effort: herdr_cadence::config::ReasoningEffort::High,
+        },
+    );
     if global_yolo {
         config.yolo = true;
     }
@@ -313,6 +369,7 @@ fn run_agent_flow(
     let busy_once = fake_dir.path().join("busy-once");
     let shell_ready_once = fake_dir.path().join("shell-ready-once");
     let lead_started = fake_dir.path().join("lead-started");
+    let primary_credit_failure = fake_dir.path().join("primary-credit-failure");
     let agent_path = fake_dir.path().join("agent");
     fs::create_dir(&agent_path).unwrap();
     let script = format!(
@@ -354,6 +411,18 @@ esac
 case "$*" in
   "agent start cadence-lead-"*) : > '{}' ;;
 esac
+case "$*" in
+  "agent start cadence-"*)
+    if [ -e '{}' ]; then
+      case "$*" in
+        *"--kind codex"*)
+          printf '%s\n' 'credit exhausted' >&2
+          exit 1
+          ;;
+      esac
+    fi
+    ;;
+esac
 if [ "$1 $2" = "workspace create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"lead-ws"}},"tab":{{"tab_id":"tab-lead"}},"root_pane":{{"pane_id":"pane-lead"}}}}}}'
 elif [ "$1 $2" = "tab create" ]; then
@@ -382,6 +451,7 @@ fi
         busy_once.display(),
         busy_once.display(),
         lead_started.display(),
+        primary_credit_failure.display(),
         agent_path.display(),
         repo.path().display(),
         agent_path.display()
@@ -390,6 +460,9 @@ fi
     let mut permissions = fs::metadata(&fake).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&fake, permissions).unwrap();
+    if force_primary_credit_failure {
+        fs::write(&primary_credit_failure, "1\n").unwrap();
+    }
 
     let start = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
         .args([
@@ -540,8 +613,22 @@ fi
     assert_eq!(value["agent_id"], "agent-1");
     assert_eq!(value["display_name"], "[QA] Add API");
     assert_eq!(value["role"], "qa");
-    assert_eq!(value["model"], "qa-model");
-    assert_eq!(value["reasoning_effort"], "low");
+    assert_eq!(
+        value["runner"],
+        if force_primary_credit_failure {
+            "qa-backup"
+        } else {
+            "qa-primary"
+        }
+    );
+    assert_eq!(
+        value["model"],
+        if force_primary_credit_failure {
+            "backup-model"
+        } else {
+            "qa-model"
+        }
+    );
     if use_worktree {
         assert_eq!(value["workspace_id"], "agent-ws");
     } else {
@@ -583,6 +670,7 @@ fi
     assert!(calls.contains("only after the user explicitly asks to end the Cadence session"));
     assert!(calls.contains("use each spawn result's `display_name`"));
     assert!(calls.contains("do not call agents Agent 2 or agent-2"));
+    assert!(calls.contains("Cadence tries each role's ordered runners only when launching fails"));
     let lead_launch =
         "--kind opencode --pane pane-lead --timeout 120000 -- --model openai/lead-model#high";
     assert!(calls.contains(lead_launch));
@@ -619,9 +707,18 @@ fi
     assert!(calls.contains("agent start cadence-"));
     let agent_launch = "--kind codex --pane pane-agent --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
     assert!(calls.contains(agent_launch));
+    let selected_launch = if force_primary_credit_failure {
+        "--kind claude --pane pane-agent --timeout 120000 -- --model backup-model --effort high"
+    } else {
+        agent_launch
+    };
+    assert!(calls.contains(selected_launch));
+    if force_primary_credit_failure {
+        assert!(calls.contains("provider is unavailable; retrying with fallback qa-backup"));
+    }
     if global_yolo {
         assert!(calls.contains(&format!(
-            "{agent_launch} --dangerously-bypass-approvals-and-sandbox"
+            "{selected_launch} --dangerously-bypass-approvals-and-sandbox"
         )));
     } else if use_worktree {
         assert!(calls.contains(&format!(

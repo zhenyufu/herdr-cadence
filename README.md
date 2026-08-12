@@ -74,7 +74,7 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 `init` writes `.cadence.toml` from the [canonical initial configuration](src/config.rs).
 
 ```toml
-schema_version = 1
+schema_version = 2
 enabled = true
 # Give the Lead and every agent unrestricted host access.
 yolo = false
@@ -90,52 +90,74 @@ max_parallel = 4 # Maximum concurrent agents; 1-16
 auto_integrate = true # Applies only to agents using shared-checkout.
 cleanup_on_success = true # Remove successful agent tabs or worktrees after integration.
 
-# Copy and uncomment this block to add a role. Requests cannot override a role's
-# checkout mode or overlap another active agent's path scope.
+# A role selects ordered runner profiles. The first is primary; later entries are
+# launch-time fallbacks for provider availability failures. Roles come first so
+# the workflow stays readable; runner profiles may be defined below them.
 
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
-# harness = "inherit" # claude | codex | opencode | inherit (Lead harness, not its model)
-# model = "provider/model" # Optional; omit to use the selected harness default.
-# reasoning_effort = "medium" # default | low | medium | high | xhigh
+# runners = ["codex-medium", "claude-medium"]
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
 
 [agents.roles.generalist]
 description = "Implements general changes that do not require a specialized role"
-harness = "codex"
-model = "gpt-5.6-terra"
-reasoning_effort = "medium"
+runners = ["codex-medium", "claude-medium"]
 version_control_mode = "shared-checkout"
 
 # Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
 description = "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md"
-harness = "codex"
-model = "gpt-5.6-sol"
-reasoning_effort = "high" # "xhigh" # for difficult architecture
+runners = ["codex-planning", "claude-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.researcher]
 description = "Investigates questions and gathers evidence before implementation"
-harness = "codex"
-model = "gpt-5.6-terra"
-reasoning_effort = "high"
+runners = ["codex-high", "claude-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.developer]
 description = "Writes code"
-harness = "codex"
-model = "gpt-5.6-terra"
-reasoning_effort = "medium"
+runners = ["codex-medium", "claude-medium"]
 version_control_mode = "git-worktree"
 
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
+runners = ["codex-medium", "claude-medium"]
+version_control_mode = "shared-checkout"
+
+[agents.runners.codex-medium]
 harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "medium"
-version_control_mode = "shared-checkout"
+
+[agents.runners.codex-high]
+harness = "codex"
+model = "gpt-5.6-terra"
+reasoning_effort = "high"
+
+[agents.runners.codex-planning]
+harness = "codex"
+model = "gpt-5.6-sol"
+reasoning_effort = "high"
+
+[agents.runners.claude-medium]
+harness = "claude"
+model = "sonnet"
+reasoning_effort = "medium"
+
+[agents.runners.claude-high]
+harness = "claude"
+model = "sonnet"
+reasoning_effort = "high"
 ```
+
+Cadence uses the first runner as the primary and tries later runners only when
+the agent cannot launch because its provider is unavailable (for example,
+exhausted credits, quota, rate limits, capacity, or authentication). Once an
+agent launches, Cadence pins that runner. If it later exits or blocks, Cadence
+retains its resources and tells the Lead to decide whether reassignment is safe.
+The `harness`, `model`, and `reasoning_effort` fields belong to runners, not
+roles; previous single-harness role configuration is unsupported.
 
 ## Injected context
 

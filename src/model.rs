@@ -61,6 +61,8 @@ pub struct Agent {
     pub role: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub role_description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
     pub harness: Harness,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -151,12 +153,6 @@ pub struct AgentRequest {
     pub acceptance: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub harness: Option<Harness>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,13 +209,6 @@ impl AgentRequest {
                 .all(|criterion| !criterion.is_empty()),
             "acceptance criteria cannot contain empty values"
         );
-        if self
-            .model
-            .as_deref()
-            .is_some_and(|model| model.trim().is_empty())
-        {
-            anyhow::bail!("model cannot be empty");
-        }
         Ok(self)
     }
 }

@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::config::{Config, Harness, VersionControlMode};
+use crate::config::{Config, Harness, ResolvedRunner, VersionControlMode};
 use crate::git;
 use crate::herdr::Herdr;
 use crate::model::{
@@ -226,15 +226,12 @@ impl App {
             .keys()
             .map(String::as_str)
             .map(|name| {
-                let (description, harness, model, reasoning_effort, version_control_mode) =
-                    config.agents.role(name)?;
+                let role = config.agents.role(name)?;
                 Ok(json!({
                     "name": name,
-                    "description": description,
-                    "harness": harness.resolve(config.lead.harness),
-                    "model": model,
-                    "reasoning_effort": reasoning_effort,
-                    "version_control_mode": version_control_mode,
+                    "description": role.description,
+                    "runners": role.runners,
+                    "version_control_mode": role.version_control_mode,
                 }))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -267,17 +264,15 @@ impl App {
             .role
             .as_deref()
             .unwrap_or(config.agent_default.as_str());
-        let (
-            role_description,
-            role_harness,
-            role_model,
-            role_reasoning_effort,
-            version_control_mode,
-        ) = config.agents.role(role_name)?;
-        let use_worktree = version_control_mode == VersionControlMode::GitWorktree;
+        let role_config = config.agents.role(role_name)?;
+        let use_worktree = role_config.version_control_mode == VersionControlMode::GitWorktree;
         let role_name = role_name.to_string();
-        let role_description = role_description.to_string();
-        let role_model = role_model.map(str::to_string);
+        let role_description = role_config.description;
+        let runners = role_config.runners;
+        let primary_runner = runners
+            .first()
+            .context("role has no configured runners")?
+            .clone();
         let max_parallel = config.max_parallel();
         let key = project_key(&self.root);
         if !use_worktree {
@@ -317,11 +312,6 @@ impl App {
             let number = run.next_agent;
             run.next_agent += 1;
             let id = format!("agent-{number}");
-            let harness = request
-                .harness
-                .unwrap_or_else(|| role_harness.resolve(config.lead.harness));
-            let model = request.model.clone().or_else(|| role_model.clone());
-            let reasoning_effort = request.reasoning_effort.unwrap_or(role_reasoning_effort);
             let title_slug = slug(&request.title, 20);
             let title_slug = if title_slug.is_empty() {
                 "task".to_string()
@@ -341,9 +331,10 @@ impl App {
                 acceptance: request.acceptance.clone(),
                 role: role_name.clone(),
                 role_description: role_description.clone(),
-                harness,
-                model,
-                reasoning_effort,
+                runner: Some(primary_runner.name.clone()),
+                harness: primary_runner.harness,
+                model: primary_runner.model.clone(),
+                reasoning_effort: primary_runner.reasoning_effort,
                 yolo: config.yolo,
                 use_worktree,
                 branch,
@@ -395,18 +386,7 @@ impl App {
             stored.checkout_path = terminal.checkout_path.clone();
             Ok(())
         })?;
-        let agent_args = agent_launch_args(&agent, self.state.dir());
-        if let Err(error) = self.herdr.start_agent(
-            &agent.agent_name,
-            agent.harness,
-            &terminal.pane_id,
-            agent.model.as_deref(),
-            agent.reasoning_effort,
-            &agent_args,
-        ) {
-            self.fail_agent(&key, &agent.id, &error.to_string())?;
-            return Err(error.context("failed to start agent"));
-        }
+        let agent = self.start_agent_with_fallbacks(&key, agent, &terminal.pane_id, &runners)?;
         let prompt = prompts::agent(&self.binary, self.state.dir(), &self.root, &run.id, &agent);
         self.herdr.prompt_agent(&agent.agent_name, &prompt)?;
         self.state.update(|store| {
@@ -415,7 +395,7 @@ impl App {
         })?;
         let display_name = agent_display_name(&agent);
         Ok(
-            json!({"status": "working", "agent_id": agent.id, "display_name": display_name, "role": agent.role, "agent": agent.agent_name, "model": agent.model, "reasoning_effort": agent.reasoning_effort, "branch": agent.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
+            json!({"status": "working", "agent_id": agent.id, "display_name": display_name, "role": agent.role, "runner": agent.runner, "harness": agent.harness, "model": agent.model, "reasoning_effort": agent.reasoning_effort, "branch": agent.branch, "workspace_id": terminal.workspace_id, "pane_id": terminal.pane_id}),
         )
     }
 
@@ -950,6 +930,59 @@ impl App {
         })
     }
 
+    fn start_agent_with_fallbacks(
+        &self,
+        key: &str,
+        agent: Agent,
+        pane_id: &str,
+        runners: &[ResolvedRunner],
+    ) -> Result<Agent> {
+        for (index, runner) in runners.iter().enumerate() {
+            let mut attempt = agent.clone();
+            attempt.runner = Some(runner.name.clone());
+            attempt.harness = runner.harness;
+            attempt.model = runner.model.clone();
+            attempt.reasoning_effort = runner.reasoning_effort;
+            self.state.update(|store| {
+                let stored = agent_mut(active_run_mut(store, key)?, &attempt.id)?;
+                stored.runner = attempt.runner.clone();
+                stored.harness = attempt.harness;
+                stored.model = attempt.model.clone();
+                stored.reasoning_effort = attempt.reasoning_effort;
+                Ok(())
+            })?;
+            let agent_args = agent_launch_args(&attempt, self.state.dir());
+            match self.herdr.start_agent(
+                &attempt.agent_name,
+                attempt.harness,
+                pane_id,
+                attempt.model.as_deref(),
+                attempt.reasoning_effort,
+                &agent_args,
+            ) {
+                Ok(()) => return Ok(attempt),
+                Err(error)
+                    if is_runner_availability_failure(&error) && index + 1 < runners.len() =>
+                {
+                    let fallback = &runners[index + 1];
+                    self.notify(
+                        key,
+                        &format!(
+                            "{} could not launch with runner {} because its provider is unavailable; retrying with fallback {}.",
+                            agent_display_name(&agent), runner.name, fallback.name
+                        ),
+                    );
+                }
+                Err(error) => {
+                    let message = format!("failed to start runner {}: {error}", runner.name);
+                    self.fail_agent(key, &agent.id, &message)?;
+                    return Err(error.context("failed to start agent"));
+                }
+            }
+        }
+        unreachable!("a role must have at least one configured runner")
+    }
+
     fn set_run_error(&self, key: &str, run_id: &str, message: &str) -> Result<()> {
         self.state.update(|store| {
             run_mut(store, key, run_id)?.last_error = Some(message.to_string());
@@ -1107,6 +1140,26 @@ fn run_mut<'a>(store: &'a mut crate::model::Store, key: &str, run_id: &str) -> R
         .context("unknown Cadence run")
 }
 
+fn is_runner_availability_failure(error: &anyhow::Error) -> bool {
+    const MARKERS: [&str; 11] = [
+        "credit",
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "429",
+        "capacity",
+        "overloaded",
+        "provider unavailable",
+        "authentication",
+        "unauthorized",
+        "forbidden",
+    ];
+    error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        MARKERS.iter().any(|marker| message.contains(marker))
+    })
+}
+
 fn agent_mut<'a>(run: &'a mut Run, agent_id: &str) -> Result<&'a mut Agent> {
     run.agents.get_mut(agent_id).context("unknown agent")
 }
@@ -1239,7 +1292,9 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{configured_agent_launch_args, display_role, yolo_agent_args};
+    use super::{
+        configured_agent_launch_args, display_role, is_runner_availability_failure, yolo_agent_args,
+    };
     use crate::config::Harness;
 
     #[test]
@@ -1280,5 +1335,15 @@ mod tests {
             yolo_agent_args(Harness::Claude, true),
             ["--dangerously-skip-permissions"]
         );
+    }
+
+    #[test]
+    fn recognizes_provider_availability_failures() {
+        assert!(is_runner_availability_failure(&anyhow::anyhow!(
+            "provider quota exhausted"
+        )));
+        assert!(!is_runner_availability_failure(&anyhow::anyhow!(
+            "agent launch arguments are invalid"
+        )));
     }
 }
