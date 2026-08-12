@@ -1027,6 +1027,9 @@ impl App {
     fn cleanup_agent(&self, key: &str, agent_id: &str) -> Result<()> {
         let run = self.active_run_snapshot(key)?;
         let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
+        if let Some(tab_id) = agent.tab_id.as_deref() {
+            let _ = self.herdr.close_tab(tab_id);
+        }
         if agent.use_worktree {
             if let Some(workspace_id) = agent.workspace_id.as_deref()
                 && self.herdr.workspace_exists(workspace_id)
@@ -1035,8 +1038,6 @@ impl App {
             }
             let root = PathBuf::from(self.project_root_for_key(key)?);
             git::delete_branch(&root, &agent.branch)?;
-        } else if let Some(tab_id) = agent.tab_id.as_deref() {
-            let _ = self.herdr.close_tab(tab_id);
         }
         self.state.update(|store| {
             let stored = agent_mut(active_run_mut(store, key)?, agent_id)?;

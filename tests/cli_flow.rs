@@ -893,7 +893,14 @@ fi
         "Lead completion notification must precede interrupting the completing agent"
     );
     if use_worktree {
-        assert!(calls.contains("worktree remove --workspace agent-ws --force"));
+        let tab_close = calls.rfind("tab close agent-tab").unwrap();
+        let worktree_remove = calls
+            .rfind("worktree remove --workspace agent-ws --force")
+            .unwrap();
+        assert!(
+            tab_close < worktree_remove,
+            "The worktree-backed agent tab must close before its workspace is removed"
+        );
     } else {
         let tab_close = calls.rfind("tab close tab-agent").unwrap();
         assert!(
