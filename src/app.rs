@@ -84,6 +84,10 @@ impl App {
             {
                 return Ok(run.clone());
             }
+            project.active_run = None;
+            project
+                .runs
+                .retain(|_, run| run.status != RunStatus::Completed);
             let now = unix_ms();
             let id = format!("run-{now}-{}", &key[..8]);
             let name = format!("cadence-lead-{}", &key[..8]);
@@ -756,7 +760,7 @@ impl App {
         self.state.update(|store| {
             let project = store.projects.get_mut(&key).context("unknown project")?;
             let run_id = project.active_run.clone().context("no active run")?;
-            project.runs.get_mut(&run_id).context("unknown run")?.status = RunStatus::Completed;
+            project.runs.remove(&run_id).context("unknown run")?;
             project.active_run = None;
             Ok(())
         })?;

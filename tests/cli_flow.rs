@@ -897,6 +897,80 @@ fi
             "Lead completion notification must precede closing the completing agent's tab"
         );
     }
+
+    let state_path = state.path().join("state.json");
+    let store_before_finish: serde_json::Value =
+        serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let finished_run = store_before_finish["projects"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()["runs"][&active_run]
+        .clone();
+    let finish = cadence(repo.path(), state.path(), &["run", "finish"]);
+    assert!(
+        finish.status.success(),
+        "{}",
+        String::from_utf8_lossy(&finish.stderr)
+    );
+    let finished: serde_json::Value = serde_json::from_slice(&finish.stdout).unwrap();
+    assert_eq!(finished["run_id"], active_run);
+    let mut store: serde_json::Value =
+        serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let project = store["projects"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap();
+    assert!(project["active_run"].is_null());
+    assert!(project["runs"].as_object().unwrap().is_empty());
+
+    if !use_worktree && !global_yolo {
+        let project = store["projects"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+            .next()
+            .unwrap();
+        let mut legacy_run = finished_run;
+        legacy_run["id"] = "legacy-completed-run".into();
+        legacy_run["status"] = "completed".into();
+        project["runs"]
+            .as_object_mut()
+            .unwrap()
+            .insert("legacy-completed-run".into(), legacy_run);
+        fs::write(&state_path, serde_json::to_vec_pretty(&store).unwrap()).unwrap();
+
+        let restart = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "action",
+                "start",
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .env("HERDR_WORKSPACE_ID", "base-ws")
+            .output()
+            .unwrap();
+        assert!(
+            restart.status.success(),
+            "{}",
+            String::from_utf8_lossy(&restart.stderr)
+        );
+        let restarted_store: serde_json::Value =
+            serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        let project = restarted_store["projects"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap();
+        assert!(project["runs"].get("legacy-completed-run").is_none());
+    }
 }
 
 #[test]
