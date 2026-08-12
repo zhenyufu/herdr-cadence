@@ -365,6 +365,10 @@ elif [ "$1 $2" = "tab create" ]; then
 elif [ "$1 $2" = "worktree create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"agent-ws"}},"tab":{{"tab_id":"agent-tab"}},"root_pane":{{"pane_id":"pane-agent"}},"worktree":{{"path":"{}"}}}}}}'
 elif [ "$1 $2" = "worktree remove" ]; then
+  if [ "${{CADENCE_TEST_FAIL_WORKTREE_REMOVE:-}}" = "1" ]; then
+    printf '%s\n' 'forced worktree cleanup failure' >&2
+    exit 1
+  fi
   git -C '{}' worktree remove --force '{}'
   printf '%s\n' '{{"id":"test","result":{{}}}}'
 else
@@ -899,8 +903,25 @@ fi
     }
 
     let state_path = state.path().join("state.json");
-    let store_before_finish: serde_json::Value =
+    let mut store_before_finish: serde_json::Value =
         serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let project = store_before_finish["projects"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    let integrated_agent = &mut project["runs"][&active_run]["agents"]["agent-1"];
+    if use_worktree {
+        integrated_agent["workspace_id"] = "stale-workspace".into();
+    } else {
+        integrated_agent["tab_id"] = "stale-tab".into();
+    }
+    fs::write(
+        &state_path,
+        serde_json::to_vec_pretty(&store_before_finish).unwrap(),
+    )
+    .unwrap();
     let finished_run = store_before_finish["projects"]
         .as_object()
         .unwrap()
@@ -908,7 +929,41 @@ fi
         .next()
         .unwrap()["runs"][&active_run]
         .clone();
-    let finish = cadence(repo.path(), state.path(), &["run", "finish"]);
+    if use_worktree {
+        let blocked_finish = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "run",
+                "finish",
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CADENCE_TEST_FAIL_WORKTREE_REMOVE", "1")
+            .output()
+            .unwrap();
+        assert!(!blocked_finish.status.success());
+        assert!(String::from_utf8_lossy(&blocked_finish.stderr).contains("run finish --force"));
+    }
+    let mut finish_command = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"));
+    finish_command.args([
+        "--state-dir",
+        state.path().to_str().unwrap(),
+        "--project-root",
+        repo.path().to_str().unwrap(),
+        "run",
+        "finish",
+    ]);
+    if use_worktree {
+        finish_command
+            .arg("--force")
+            .env("CADENCE_TEST_FAIL_WORKTREE_REMOVE", "1");
+    }
+    let finish = finish_command
+        .env("HERDR_BIN_PATH", &fake)
+        .output()
+        .unwrap();
     assert!(
         finish.status.success(),
         "{}",
@@ -916,6 +971,10 @@ fi
     );
     let finished: serde_json::Value = serde_json::from_slice(&finish.stdout).unwrap();
     assert_eq!(finished["run_id"], active_run);
+    assert_eq!(
+        finished["cleanup_warnings"].as_array().unwrap().is_empty(),
+        !use_worktree
+    );
     let mut store: serde_json::Value =
         serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
     let project = store["projects"]

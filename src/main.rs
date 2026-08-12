@@ -45,7 +45,10 @@ enum Action {
 #[derive(Subcommand)]
 enum RunCommand {
     Status,
-    Finish,
+    Finish {
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -128,7 +131,7 @@ fn run() -> Result<()> {
         }
         Command::Run { command } => match command {
             RunCommand::Status => app.status()?,
-            RunCommand::Finish => app.finish_run()?,
+            RunCommand::Finish { force } => app.finish_run(force)?,
         },
         Command::Agent { command } => match command {
             AgentCommand::Spawn { request_file } => app.spawn_agent(&request_file)?,

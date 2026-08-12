@@ -735,7 +735,7 @@ impl App {
         self.agent_status(agent_id)
     }
 
-    pub fn finish_run(&self) -> Result<Value> {
+    pub fn finish_run(&self, force: bool) -> Result<Value> {
         let config = self.enabled_config()?;
         let key = project_key(&self.root);
         let run = self.active_run_snapshot(&key)?;
@@ -746,16 +746,41 @@ impl App {
                 agent.status
             );
         }
-        if config.git.cleanup_on_success
-            && let Some(agent) = run.agents.values().find(|a| {
-                a.status == AgentStatus::Integrated
-                    && (a.workspace_id.is_some() || a.tab_id.is_some())
-            })
-        {
-            bail!(
-                "Agent {} is integrated but its resources have not been cleaned up",
-                agent.id
-            );
+        let mut cleanup_warnings = Vec::new();
+        if config.git.cleanup_on_success {
+            let pending = run
+                .agents
+                .values()
+                .filter(|agent| {
+                    agent.status == AgentStatus::Integrated
+                        && (agent.workspace_id.is_some() || agent.tab_id.is_some())
+                })
+                .map(|agent| agent.id.clone())
+                .collect::<Vec<_>>();
+            for agent_id in pending {
+                if let Err(error) = self.cleanup_agent(&key, &agent_id) {
+                    cleanup_warnings.push(format!(
+                        "Agent {agent_id} cleanup failed; resources may remain: {error}"
+                    ));
+                }
+            }
+            let run = self.active_run_snapshot(&key)?;
+            let retained = run
+                .agents
+                .values()
+                .filter(|agent| {
+                    agent.status == AgentStatus::Integrated
+                        && (agent.workspace_id.is_some() || agent.tab_id.is_some())
+                })
+                .map(|agent| agent.id.as_str())
+                .collect::<Vec<_>>();
+            if !retained.is_empty() && !force {
+                bail!(
+                    "Integrated agent resources could not be cleaned up ({}). Retry, or run `run finish --force` to forget them. {}",
+                    retained.join(", "),
+                    cleanup_warnings.join("; ")
+                );
+            }
         }
         self.state.update(|store| {
             let project = store.projects.get_mut(&key).context("unknown project")?;
@@ -764,7 +789,7 @@ impl App {
             project.active_run = None;
             Ok(())
         })?;
-        Ok(json!({"status": "completed", "run_id": run.id}))
+        Ok(json!({"status": "completed", "run_id": run.id, "cleanup_warnings": cleanup_warnings}))
     }
 
     pub fn handle_event(&self, event_name: &str, event_json: &str) -> Result<Value> {
@@ -1003,9 +1028,13 @@ impl App {
         let run = self.active_run_snapshot(key)?;
         let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
         if agent.use_worktree {
-            if let Some(workspace_id) = agent.workspace_id.as_deref() {
+            if let Some(workspace_id) = agent.workspace_id.as_deref()
+                && self.herdr.workspace_exists(workspace_id)
+            {
                 self.herdr.remove_worktree(workspace_id)?;
             }
+            let root = PathBuf::from(self.project_root_for_key(key)?);
+            git::delete_branch(&root, &agent.branch)?;
         } else if let Some(tab_id) = agent.tab_id.as_deref() {
             let _ = self.herdr.close_tab(tab_id);
         }
@@ -1017,10 +1046,6 @@ impl App {
             stored.checkout_path = None;
             Ok(())
         })?;
-        if agent.use_worktree {
-            let root = PathBuf::from(self.project_root_for_key(key)?);
-            git::delete_branch(&root, &agent.branch)?;
-        }
         Ok(())
     }
 }
