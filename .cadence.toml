@@ -20,63 +20,53 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
-# runners = ["codex-medium", "claude-medium"]
+# runners = ["codex-terra-medium"]
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
 
 [agents.roles.generalist]
 description = "Implements general changes that do not require a specialized role"
-runners = ["codex-medium", "claude-medium"]
+runners = ["codex-terra-medium"]
 version_control_mode = "shared-checkout"
 
 # Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
 description = "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md"
-runners = ["codex-planning", "claude-high"]
+runners = ["codex-sol-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.researcher]
 description = "Investigates questions and gathers evidence before implementation"
-runners = ["codex-high", "claude-high"]
+runners = ["codex-terra-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.developer]
 description = "Writes code"
-runners = ["codex-medium", "claude-medium"]
+runners = ["codex-terra-medium"]
 version_control_mode = "git-worktree"
 
 [agents.roles.reviewer]
 description = "Reviews code implementation"
-runners = ["claude-opus-high", "codex-planning"]
+runners = ["claude-opus-high", "codex-terra-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
-runners = ["codex-medium", "claude-medium"]
+runners = ["codex-terra-medium"]
 version_control_mode = "shared-checkout"
 
-[agents.runners.codex-medium]
+[agents.runners.codex-terra-medium]
 harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 
-[agents.runners.codex-high]
+[agents.runners.codex-terra-high]
 harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "high"
 
-[agents.runners.codex-planning]
+[agents.runners.codex-sol-high]
 harness = "codex"
 model = "gpt-5.6-sol"
-reasoning_effort = "high"
-
-[agents.runners.claude-medium]
-harness = "claude"
-model = "sonnet"
-reasoning_effort = "medium"
-
-[agents.runners.claude-high]
-harness = "claude"
-model = "sonnet"
 reasoning_effort = "high"
 
 [agents.runners.claude-opus-high]

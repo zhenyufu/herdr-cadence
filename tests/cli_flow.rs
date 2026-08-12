@@ -82,13 +82,14 @@ fn enables_and_reports_project_status() {
     assert!(config.contains("schema_version = 2"));
     assert!(config.contains("agent_default = \"generalist\""));
     assert!(config.contains("[agents.roles.generalist]"));
-    assert!(config.contains("runners = [\"codex-medium\", \"claude-medium\"]"));
-    assert!(config.contains("[agents.runners.codex-medium]"));
+    assert!(config.contains("runners = [\"codex-terra-medium\"]"));
+    assert!(config.contains("[agents.runners.codex-terra-medium]"));
     assert!(config.contains("description = \"Implements general changes"));
     assert!(config.contains("[agents.roles.planner]"));
     assert!(!config.contains("[agents.roles.planning]"));
     assert!(config.contains("[agents.roles.researcher]"));
     assert!(config.contains("[agents.roles.developer]"));
+    assert!(config.contains("[agents.roles.reviewer]"));
     assert!(config.contains("[agents.roles.qa]"));
     assert!(config.find("[git]").unwrap() < config.find("[agents.roles.").unwrap());
     let parsed: herdr_cadence::config::Config = toml::from_str(&config).unwrap();
@@ -103,7 +104,19 @@ fn enables_and_reports_project_status() {
     assert_eq!(parsed.lead.model.as_deref(), Some("gpt-5.6-terra"));
     assert_eq!(parsed.agent_default, "generalist");
     let generalist = parsed.agents.roles.get("generalist").unwrap();
-    assert_eq!(generalist.runners[0], "codex-medium");
+    assert_eq!(generalist.runners[0], "codex-terra-medium");
+    let roles_using_claude = parsed
+        .agents
+        .roles
+        .iter()
+        .filter(|(_, role)| {
+            role.runners.iter().any(|runner| {
+                parsed.agents.runners[runner].harness == herdr_cadence::config::Harness::Claude
+            })
+        })
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(roles_using_claude, ["reviewer"]);
     assert!(!parsed.yolo);
     assert_eq!(
         generalist.version_control_mode,
@@ -192,7 +205,7 @@ fn validates_and_resolves_project_config() {
     assert!(roles.iter().any(|role| role["name"] == "qa"));
     assert!(roles.iter().any(|role| role["name"] == "researcher"));
     let planner = roles.iter().find(|role| role["name"] == "planner").unwrap();
-    assert_eq!(planner["runners"][0]["name"], "codex-planning");
+    assert_eq!(planner["runners"][0]["name"], "codex-sol-high");
     assert_eq!(planner["runners"][0]["model"], "gpt-5.6-sol");
     assert_eq!(planner["runners"][0]["reasoning_effort"], "high");
     assert_eq!(planner["version_control_mode"], "shared-checkout");
@@ -346,7 +359,7 @@ fn run_agent_flow(
     config.agents.runners.insert(
         "qa-backup".into(),
         herdr_cadence::config::RunnerConfig {
-            harness: herdr_cadence::config::Harness::Claude,
+            harness: herdr_cadence::config::Harness::Opencode,
             model: Some("backup-model".into()),
             reasoning_effort: herdr_cadence::config::ReasoningEffort::High,
         },
@@ -415,7 +428,7 @@ case "$*" in
   "agent start cadence-"*)
     if [ -e '{}' ]; then
       case "$*" in
-        *"--kind codex"*)
+        *"--model qa-model"*)
           printf '%s\n' 'credit exhausted' >&2
           exit 1
           ;;
@@ -721,7 +734,7 @@ fi
     let agent_launch = "--kind codex --pane pane-agent --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
     assert!(calls.contains(agent_launch));
     let selected_launch = if force_primary_credit_failure {
-        "--kind claude --pane pane-agent --timeout 120000 -- --model backup-model --effort high"
+        "--kind opencode --pane pane-agent --timeout 120000 -- --model backup-model#high"
     } else {
         agent_launch
     };

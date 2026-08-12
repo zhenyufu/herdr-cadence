@@ -30,58 +30,58 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
-# runners = ["codex-medium", "claude-medium"]
+# runners = ["codex-terra-medium"]
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
 
 [agents.roles.generalist]
 description = "Implements general changes that do not require a specialized role"
-runners = ["codex-medium", "claude-medium"]
+runners = ["codex-terra-medium"]
 version_control_mode = "shared-checkout"
 
 # Common Workflow: planner -> researcher -> developer -> qa
 [agents.roles.planner]
 description = "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md"
-runners = ["codex-planning", "claude-high"]
+runners = ["codex-sol-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.researcher]
 description = "Investigates questions and gathers evidence before implementation"
-runners = ["codex-high", "claude-high"]
+runners = ["codex-terra-high"]
 version_control_mode = "shared-checkout"
 
 [agents.roles.developer]
 description = "Writes code"
-runners = ["codex-medium", "claude-medium"]
+runners = ["codex-terra-medium"]
 version_control_mode = "git-worktree"
+
+[agents.roles.reviewer]
+description = "Reviews code implementation"
+runners = ["claude-opus-high", "codex-terra-high"]
+version_control_mode = "shared-checkout"
 
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"
-runners = ["codex-medium", "claude-medium"]
+runners = ["codex-terra-medium"]
 version_control_mode = "shared-checkout"
 
-[agents.runners.codex-medium]
+[agents.runners.codex-terra-medium]
 harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 
-[agents.runners.codex-high]
+[agents.runners.codex-terra-high]
 harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "high"
 
-[agents.runners.codex-planning]
+[agents.runners.codex-sol-high]
 harness = "codex"
 model = "gpt-5.6-sol"
 reasoning_effort = "high"
 
-[agents.runners.claude-medium]
+[agents.runners.claude-opus-high]
 harness = "claude"
-model = "sonnet"
-reasoning_effort = "medium"
-
-[agents.runners.claude-high]
-harness = "claude"
-model = "sonnet"
+model = "opus"
 reasoning_effort = "high"
 "#;
 
@@ -396,7 +396,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             RoleConfig {
                 description: "Implements general changes that do not require a specialized role"
                     .into(),
-                runners: vec!["codex-medium".into(), "claude-medium".into()],
+                runners: vec!["codex-terra-medium".into()],
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -404,7 +404,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             "planner".into(),
             RoleConfig {
                 description: "Plans complex work and identifies dependencies, risks, and acceptance criteria. Write to implementation-plan.md".into(),
-                runners: vec!["codex-planning".into(), "claude-high".into()],
+                runners: vec!["codex-sol-high".into()],
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -413,7 +413,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             RoleConfig {
                 description: "Investigates questions and gathers evidence before implementation"
                     .into(),
-                runners: vec!["codex-high".into(), "claude-high".into()],
+                runners: vec!["codex-terra-high".into()],
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -421,8 +421,16 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             "developer".into(),
             RoleConfig {
                 description: "Writes code".into(),
-                runners: vec!["codex-medium".into(), "claude-medium".into()],
+                runners: vec!["codex-terra-medium".into()],
                 version_control_mode: VersionControlMode::GitWorktree,
+            },
+        ),
+        (
+            "reviewer".into(),
+            RoleConfig {
+                description: "Reviews code implementation".into(),
+                runners: vec!["claude-opus-high".into(), "codex-terra-high".into()],
+                version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
         (
@@ -430,7 +438,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
             RoleConfig {
                 description: "Validates behavior, tests changes, and investigates regressions"
                     .into(),
-                runners: vec!["codex-medium".into(), "claude-medium".into()],
+                runners: vec!["codex-terra-medium".into()],
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         ),
@@ -442,7 +450,7 @@ fn default_roles() -> BTreeMap<String, RoleConfig> {
 fn default_runners() -> BTreeMap<String, RunnerConfig> {
     [
         (
-            "codex-medium".into(),
+            "codex-terra-medium".into(),
             RunnerConfig {
                 harness: Harness::Codex,
                 model: Some("gpt-5.6-terra".into()),
@@ -450,7 +458,7 @@ fn default_runners() -> BTreeMap<String, RunnerConfig> {
             },
         ),
         (
-            "codex-high".into(),
+            "codex-terra-high".into(),
             RunnerConfig {
                 harness: Harness::Codex,
                 model: Some("gpt-5.6-terra".into()),
@@ -458,7 +466,7 @@ fn default_runners() -> BTreeMap<String, RunnerConfig> {
             },
         ),
         (
-            "codex-planning".into(),
+            "codex-sol-high".into(),
             RunnerConfig {
                 harness: Harness::Codex,
                 model: Some("gpt-5.6-sol".into()),
@@ -466,18 +474,10 @@ fn default_runners() -> BTreeMap<String, RunnerConfig> {
             },
         ),
         (
-            "claude-medium".into(),
+            "claude-opus-high".into(),
             RunnerConfig {
                 harness: Harness::Claude,
-                model: Some("sonnet".into()),
-                reasoning_effort: ReasoningEffort::Medium,
-            },
-        ),
-        (
-            "claude-high".into(),
-            RunnerConfig {
-                harness: Harness::Claude,
-                model: Some("sonnet".into()),
+                model: Some("opus".into()),
                 reasoning_effort: ReasoningEffort::High,
             },
         ),
@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(parsed.agent_default, GENERALIST_ROLE);
         assert_eq!(parsed.lead.max_parallel, Some(4));
         let generalist = parsed.agents.role(GENERALIST_ROLE).unwrap();
-        assert_eq!(generalist.runners[0].name, "codex-medium");
+        assert_eq!(generalist.runners[0].name, "codex-terra-medium");
         assert_eq!(generalist.runners[0].harness, Harness::Codex);
         assert_eq!(
             generalist.runners[0].model.as_deref(),
@@ -635,7 +635,12 @@ mod tests {
     fn accepts_configured_runner_models() {
         let mut config = Config::default();
         config.lead.model = Some("lead-model".into());
-        config.agents.runners.get_mut("codex-medium").unwrap().model = Some("agent-model".into());
+        config
+            .agents
+            .runners
+            .get_mut("codex-terra-medium")
+            .unwrap()
+            .model = Some("agent-model".into());
 
         let raw = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&raw).unwrap();
@@ -681,13 +686,10 @@ mod tests {
         let mut config = Config::default();
         config.lead.harness = Harness::Claude;
         config.lead.model = Some("opus".into());
-        let researcher = config.agents.runners.get_mut("codex-high").unwrap();
-        researcher.harness = Harness::Claude;
-        researcher.model = Some("sonnet".into());
 
         assert!(config.validate().is_ok());
         assert_eq!(
-            config.agents.role("researcher").unwrap().runners[0].harness,
+            config.agents.role("reviewer").unwrap().runners[0].harness,
             Harness::Claude
         );
 
@@ -710,7 +712,7 @@ mod tests {
             "researcher".into(),
             RoleConfig {
                 description: "Investigate options and gather evidence".into(),
-                runners: vec!["researcher-primary".into(), "claude-high".into()],
+                runners: vec!["researcher-primary".into(), "codex-terra-high".into()],
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
@@ -793,7 +795,7 @@ cleanup_on_success = true
             " invalid ".into(),
             RoleConfig {
                 description: "Ambiguous fallback".into(),
-                runners: vec!["codex-medium".into()],
+                runners: vec!["codex-terra-medium".into()],
                 version_control_mode: VersionControlMode::SharedCheckout,
             },
         );
@@ -814,16 +816,14 @@ cleanup_on_success = true
         assert!(config.validate().is_err());
 
         config.agents.roles.get_mut("qa").unwrap().runners =
-            vec!["codex-medium".into(), "codex-medium".into()];
+            vec!["codex-terra-medium".into(), "codex-terra-medium".into()];
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn rejects_single_harness_role_configuration() {
-        let raw = DEFAULT_CONFIG_TOML.replace(
-            "runners = [\"codex-medium\", \"claude-medium\"]",
-            "harness = \"codex\"",
-        );
+        let raw = DEFAULT_CONFIG_TOML
+            .replace("runners = [\"codex-terra-medium\"]", "harness = \"codex\"");
         assert!(toml::from_str::<Config>(&raw).is_err());
     }
 }
