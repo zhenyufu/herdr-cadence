@@ -1124,7 +1124,10 @@ fn agent_launch_args(agent: &Agent, state_dir: &Path) -> Vec<String> {
         return yolo_agent_args(agent.harness, true);
     }
     if !agent.use_worktree {
-        return Vec::new();
+        return match agent.harness {
+            Harness::Codex => vec!["--add-dir".into(), state_dir.display().to_string()],
+            Harness::Opencode => Vec::new(),
+        };
     }
     match agent.harness {
         Harness::Codex => vec![

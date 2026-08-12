@@ -626,6 +626,10 @@ fi
         )));
         assert!(calls.contains("If an action outside the available sandbox is required"));
     } else {
+        assert!(calls.contains(&format!(
+            "{agent_launch} --add-dir {}",
+            state.path().display()
+        )));
         assert!(!calls.contains("--ask-for-approval never"));
         assert!(!calls.contains("--dangerously-bypass-approvals-and-sandbox"));
     }
