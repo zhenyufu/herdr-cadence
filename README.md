@@ -2,13 +2,16 @@
 Cadence is a light Orchestrating plugin for Herdr that provides one **Lead** and a fleet of **agents**. Talk to the Lead, and it will spin up agents with different roles fully integrated with Herdr tabs and git worktrees.
 
 ## Supported harness
-Supported:
-* Codex
-* Claude Code
+| Harness| As Lead | As Agent | 
+| Codex | Supported | Supported | 
+| Claude | Untested | Supported* |
+| Opencode | Untested | Untested | 
 
+* need to manually run and accept once: 
+```
+claude  --dangerously-skip-permissions
 
-Supported but untested:
-* Opencode
+```
 
 ## Install and usage
 
