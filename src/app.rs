@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -343,6 +344,7 @@ impl App {
                 use_worktree,
                 branch,
                 base_sha: base_sha.clone(),
+                claimed_commits: Vec::new(),
                 agent_name: format!("cadence-{}-a{number}", &key[..6]),
                 status: AgentStatus::Starting,
                 workspace_id: None,
@@ -480,7 +482,7 @@ impl App {
                         .as_deref()
                         .context("agent checkout is unavailable")?,
                 );
-                let (agent_head, changed_paths) = if agent.use_worktree {
+                let (agent_head, changed_paths, claimed_commits) = if agent.use_worktree {
                     git::ensure_clean(&checkout)?;
                     let agent_head = git::head(&checkout)?;
                     ensure!(
@@ -496,7 +498,7 @@ impl App {
                     }
                     let changed_paths =
                         git::changed_paths(&checkout, &agent.base_sha, &agent_head)?;
-                    (Some(agent_head), changed_paths)
+                    (Some(agent_head), changed_paths, Vec::new())
                 } else if let Some(reported_commit) = report.commit_sha.as_deref() {
                     let agent_commit = git::resolve_commit(&checkout, reported_commit)?;
                     ensure!(agent_commit != agent.base_sha, "Agent produced no commits");
@@ -509,14 +511,59 @@ impl App {
                         git::is_ancestor(&checkout, &agent_commit, &current_head)?,
                         "Agent commit is not on the current base branch"
                     );
-                    let changed_paths = git::changed_paths_for_commit(&checkout, &agent_commit)?;
-                    (Some(agent_commit), changed_paths)
+                    let mut attributed = BTreeSet::new();
+                    for (other_id, other) in &run.agents {
+                        if other_id == agent_id || other.use_worktree {
+                            continue;
+                        }
+                        if other.claimed_commits.is_empty() {
+                            if matches!(
+                                other.status,
+                                AgentStatus::Completed
+                                    | AgentStatus::Integrating
+                                    | AgentStatus::Integrated
+                                    | AgentStatus::Conflict
+                            ) && let Some(commit) = other
+                                .report
+                                .as_ref()
+                                .and_then(|report| report.commit_sha.as_deref())
+                            {
+                                attributed.insert(commit.to_string());
+                            }
+                        } else {
+                            attributed.extend(other.claimed_commits.iter().cloned());
+                        }
+                    }
+                    let claimed_commits =
+                        git::commits_between(&checkout, &agent.base_sha, &agent_commit)?
+                            .into_iter()
+                            .filter(|commit| !attributed.contains(commit))
+                            .collect::<Vec<_>>();
+                    ensure!(
+                        claimed_commits.iter().any(|commit| commit == &agent_commit),
+                        "reported commit is already attributed to another agent"
+                    );
+                    let mut changed_paths = BTreeSet::new();
+                    for commit in &claimed_commits {
+                        for path in git::changed_paths_for_commit(&checkout, commit)? {
+                            ensure!(
+                                path_within_scope(&path, &agent.scope),
+                                "Unattributed commit {commit} changed path outside this agent's reserved scope: {path}. If another shared-checkout agent created it, complete that agent first"
+                            );
+                            changed_paths.insert(path);
+                        }
+                    }
+                    (
+                        Some(agent_commit),
+                        changed_paths.into_iter().collect(),
+                        claimed_commits,
+                    )
                 } else {
                     ensure!(
                         report.changed_paths.is_empty(),
                         "shared-checkout agents must report commit_sha when files changed"
                     );
-                    (None, Vec::new())
+                    (None, Vec::new(), Vec::new())
                 };
                 ensure!(
                     agent_head.is_none() || !changed_paths.is_empty(),
@@ -534,7 +581,7 @@ impl App {
                 );
                 report.commit_sha = agent_head;
                 report.changed_paths = changed_paths;
-                self.store_report(&key, agent_id, report, AgentStatus::Completed)?;
+                self.store_completed_report(&key, agent_id, report, claimed_commits)?;
                 if agent.use_worktree {
                     self.notify(
                         &key,
@@ -845,6 +892,22 @@ impl App {
             let agent = agent_mut(active_run_mut(store, key)?, agent_id)?;
             agent.report = Some(report);
             agent.status = status;
+            Ok(())
+        })
+    }
+
+    fn store_completed_report(
+        &self,
+        key: &str,
+        agent_id: &str,
+        report: AgentReport,
+        claimed_commits: Vec<String>,
+    ) -> Result<()> {
+        self.state.update(|store| {
+            let agent = agent_mut(active_run_mut(store, key)?, agent_id)?;
+            agent.report = Some(report);
+            agent.claimed_commits = claimed_commits;
+            agent.status = AgentStatus::Completed;
             Ok(())
         })
     }

@@ -72,6 +72,8 @@ pub struct Agent {
     pub use_worktree: bool,
     pub branch: String,
     pub base_sha: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claimed_commits: Vec<String>,
     pub agent_name: String,
     pub status: AgentStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -358,6 +360,7 @@ mod tests {
 
         assert!(agent.use_worktree);
         assert!(!agent.yolo);
+        assert!(agent.claimed_commits.is_empty());
         assert_eq!(agent.reasoning_effort, ReasoningEffort::Default);
     }
 

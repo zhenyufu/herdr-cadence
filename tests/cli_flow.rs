@@ -247,25 +247,35 @@ fn rejects_agent_checkout_overrides() {
 
 #[test]
 fn runs_agent_in_shared_checkout_by_default() {
-    run_agent_flow(false, false, false);
+    run_agent_flow(false, false, false, false);
 }
 
 #[test]
 fn runs_agent_in_configured_worktree() {
-    run_agent_flow(true, false, false);
+    run_agent_flow(true, false, false, false);
 }
 
 #[test]
 fn runs_every_agent_in_global_yolo() {
-    run_agent_flow(false, true, false);
+    run_agent_flow(false, true, false, false);
 }
 
 #[test]
 fn starts_dirty_but_blocks_agents_until_clean() {
-    run_agent_flow(true, false, true);
+    run_agent_flow(true, false, true, false);
 }
 
-fn run_agent_flow(use_worktree: bool, global_yolo: bool, dirty_at_start: bool) {
+#[test]
+fn rejects_an_earlier_out_of_scope_shared_checkout_commit() {
+    run_agent_flow(false, false, false, true);
+}
+
+fn run_agent_flow(
+    use_worktree: bool,
+    global_yolo: bool,
+    dirty_at_start: bool,
+    create_out_of_scope_commit: bool,
+) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
     assert!(
@@ -623,6 +633,36 @@ fi
     assert!(calls.contains("Role guidance: Validates test behavior"));
     assert!(calls.contains("agent prompt"));
 
+    let early_follow_up = if !use_worktree && !create_out_of_scope_commit {
+        fs::write(
+            &request,
+            r#"{"title":"Update docs","task":"Update the docs","scope":["docs"],"acceptance":["Docs are current"],"role":"researcher"}"#,
+        )
+        .unwrap();
+        let follow_up = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "agent",
+                "spawn",
+                "--request-file",
+                request.to_str().unwrap(),
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .output()
+            .unwrap();
+        assert!(
+            follow_up.status.success(),
+            "{}",
+            String::from_utf8_lossy(&follow_up.stderr)
+        );
+        Some(serde_json::from_slice(&follow_up.stdout).unwrap())
+    } else {
+        None
+    };
+
     let checkout = if use_worktree {
         fs::remove_dir(&agent_path).unwrap();
         let branch = value["branch"].as_str().unwrap();
@@ -642,7 +682,17 @@ fi
         assert_eq!(value["branch"], "main");
         repo.path().to_path_buf()
     };
+    if create_out_of_scope_commit {
+        fs::write(checkout.join("outside.txt"), "outside scope\n").unwrap();
+        git(&checkout, &["add", "outside.txt"]);
+        git(&checkout, &["commit", "-m", "change outside scope"]);
+    }
     fs::create_dir_all(checkout.join("src/api")).unwrap();
+    if !use_worktree && !create_out_of_scope_commit {
+        fs::write(checkout.join("src/api/types.rs"), "pub struct Api;\n").unwrap();
+        git(&checkout, &["add", "src/api/types.rs"]);
+        git(&checkout, &["commit", "-m", "add api types"]);
+    }
     fs::write(checkout.join("src/api/mod.rs"), "pub fn ready() {}\n").unwrap();
     git(&checkout, &["add", "src/api/mod.rs"]);
     git(&checkout, &["commit", "-m", "add api"]);
@@ -670,6 +720,13 @@ fi
         .env("HERDR_BIN_PATH", &fake)
         .output()
         .unwrap();
+    if create_out_of_scope_commit {
+        assert!(!complete.status.success());
+        let error = String::from_utf8_lossy(&complete.stderr);
+        assert!(error.contains("Unattributed commit"), "{error}");
+        assert!(error.contains("outside.txt"), "{error}");
+        return;
+    }
     assert!(
         complete.status.success(),
         "{}",
@@ -685,6 +742,10 @@ fi
         }
     );
     assert_eq!(completed["report"]["changed_paths"][0], "src/api/mod.rs");
+    if !use_worktree {
+        assert_eq!(completed["claimed_commits"].as_array().unwrap().len(), 2);
+        assert_eq!(completed["report"]["changed_paths"][1], "src/api/types.rs");
+    }
     if use_worktree {
         assert!(!repo.path().join("src/api/mod.rs").exists());
         fs::write(
@@ -740,38 +801,49 @@ fi
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["active_run"]["id"], active_run);
 
-    fs::write(
-        &request,
-        r#"{"title":"Update docs","task":"Update the docs","scope":["docs"],"acceptance":["Docs are current"],"role":"researcher"}"#,
-    )
-    .unwrap();
-    let follow_up = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
-        .args([
-            "--state-dir",
-            state.path().to_str().unwrap(),
-            "--project-root",
-            repo.path().to_str().unwrap(),
-            "agent",
-            "spawn",
-            "--request-file",
-            request.to_str().unwrap(),
-        ])
-        .env("HERDR_BIN_PATH", &fake)
-        .output()
+    let follow_up: serde_json::Value = if let Some(follow_up) = early_follow_up {
+        follow_up
+    } else {
+        fs::write(
+            &request,
+            r#"{"title":"Update docs","task":"Update the docs","scope":["docs"],"acceptance":["Docs are current"],"role":"researcher"}"#,
+        )
         .unwrap();
-    assert!(
-        follow_up.status.success(),
-        "{}",
-        String::from_utf8_lossy(&follow_up.stderr)
-    );
-    let follow_up: serde_json::Value = serde_json::from_slice(&follow_up.stdout).unwrap();
+        let follow_up = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "agent",
+                "spawn",
+                "--request-file",
+                request.to_str().unwrap(),
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .output()
+            .unwrap();
+        assert!(
+            follow_up.status.success(),
+            "{}",
+            String::from_utf8_lossy(&follow_up.stderr)
+        );
+        serde_json::from_slice(&follow_up.stdout).unwrap()
+    };
     assert_eq!(follow_up["agent_id"], "agent-2");
     assert_eq!(follow_up["branch"], "main");
     assert!(follow_up["workspace_id"].is_null());
 
+    fs::create_dir_all(repo.path().join("docs")).unwrap();
+    fs::write(repo.path().join("docs/readme.md"), "Current docs\n").unwrap();
+    git(repo.path(), &["add", "docs/readme.md"]);
+    git(repo.path(), &["commit", "-m", "update docs"]);
+    let research_commit = git_stdout(repo.path(), &["rev-parse", "HEAD"]);
     fs::write(
         &report,
-        r#"{"status":"completed","summary":"Research complete","tests":[],"changed_paths":[],"blockers":[]}"#,
+        format!(
+            r#"{{"status":"completed","summary":"Research complete","tests":[],"changed_paths":[],"blockers":[],"commit_sha":"{research_commit}"}}"#
+        ),
     )
     .unwrap();
     let research_complete = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
@@ -797,10 +869,10 @@ fi
     let research_complete: serde_json::Value =
         serde_json::from_slice(&research_complete.stdout).unwrap();
     assert_eq!(research_complete["status"], "integrated");
-    assert!(research_complete["report"]["commit_sha"].is_null());
+    assert_eq!(research_complete["report"]["commit_sha"], research_commit);
     assert_eq!(
-        research_complete["report"]["changed_paths"],
-        serde_json::json!([])
+        research_complete["report"]["changed_paths"][0],
+        "docs/readme.md"
     );
 
     let calls = fs::read_to_string(&log).unwrap();
