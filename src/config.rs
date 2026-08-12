@@ -28,7 +28,7 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
-# harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
+# harness = "inherit" # claude | codex | opencode | inherit (Lead harness, not its model)
 # model = "provider/model" # Optional; omit to use the selected harness default.
 # reasoning_effort = "medium" # default | low | medium | high | xhigh
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
@@ -126,6 +126,7 @@ pub struct GitConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Harness {
+    Claude,
     Codex,
     Opencode,
 }
@@ -164,6 +165,7 @@ impl ReasoningEffort {
 impl Harness {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Opencode => "opencode",
         }
@@ -174,6 +176,7 @@ impl Harness {
 #[serde(rename_all = "lowercase")]
 pub enum AgentHarness {
     Inherit,
+    Claude,
     Codex,
     Opencode,
 }
@@ -182,6 +185,7 @@ impl AgentHarness {
     pub fn resolve(self, lead: Harness) -> Harness {
         match self {
             Self::Inherit => lead,
+            Self::Claude => Harness::Claude,
             Self::Codex => Harness::Codex,
             Self::Opencode => Harness::Opencode,
         }
@@ -566,6 +570,30 @@ mod tests {
 
         config.lead.model = Some("openai/gpt-5.2".into());
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_claude_leads_and_roles() {
+        let mut config = Config::default();
+        config.lead.harness = Harness::Claude;
+        config.lead.model = Some("opus".into());
+        let researcher = config.agents.roles.get_mut("researcher").unwrap();
+        researcher.harness = AgentHarness::Claude;
+        researcher.model = Some("sonnet".into());
+
+        assert!(config.validate().is_ok());
+        assert_eq!(
+            config
+                .agents
+                .role("researcher")
+                .unwrap()
+                .1
+                .resolve(Harness::Codex),
+            Harness::Claude
+        );
+
+        let raw = toml::to_string_pretty(&config).unwrap();
+        assert_eq!(toml::from_str::<Config>(&raw).unwrap(), config);
     }
 
     #[test]

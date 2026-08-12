@@ -1149,17 +1149,22 @@ fn truncate(value: &str, max: usize) -> String {
 }
 
 fn agent_launch_args(agent: &Agent, state_dir: &Path) -> Vec<String> {
-    if agent.yolo {
-        return yolo_agent_args(agent.harness, true);
+    configured_agent_launch_args(agent.harness, agent.yolo, agent.use_worktree, state_dir)
+}
+
+fn configured_agent_launch_args(
+    harness: Harness,
+    yolo: bool,
+    use_worktree: bool,
+    state_dir: &Path,
+) -> Vec<String> {
+    if yolo {
+        return yolo_agent_args(harness, true);
     }
-    if !agent.use_worktree {
-        return match agent.harness {
-            Harness::Codex => vec!["--add-dir".into(), state_dir.display().to_string()],
-            Harness::Opencode => Vec::new(),
-        };
-    }
-    match agent.harness {
-        Harness::Codex => vec![
+    match (harness, use_worktree) {
+        (Harness::Claude, _) => claude_agent_args(state_dir),
+        (Harness::Codex, false) => vec!["--add-dir".into(), state_dir.display().to_string()],
+        (Harness::Codex, true) => vec![
             "--sandbox".into(),
             "workspace-write".into(),
             "--ask-for-approval".into(),
@@ -1167,8 +1172,29 @@ fn agent_launch_args(agent: &Agent, state_dir: &Path) -> Vec<String> {
             "--add-dir".into(),
             state_dir.display().to_string(),
         ],
-        Harness::Opencode => Vec::new(),
+        (Harness::Opencode, _) => Vec::new(),
     }
+}
+
+fn claude_agent_args(state_dir: &Path) -> Vec<String> {
+    let settings = json!({
+        "sandbox": {
+            "enabled": true,
+            "autoAllowBashIfSandboxed": true,
+            "allowUnsandboxedCommands": false,
+            "filesystem": {
+                "allowWrite": [state_dir]
+            }
+        }
+    });
+    vec![
+        "--permission-mode".into(),
+        "acceptEdits".into(),
+        "--add-dir".into(),
+        state_dir.display().to_string(),
+        "--settings".into(),
+        settings.to_string(),
+    ]
 }
 
 fn yolo_agent_args(harness: Harness, yolo: bool) -> Vec<String> {
@@ -1176,6 +1202,7 @@ fn yolo_agent_args(harness: Harness, yolo: bool) -> Vec<String> {
         return Vec::new();
     }
     match harness {
+        Harness::Claude => vec!["--dangerously-skip-permissions".into()],
         Harness::Codex => vec!["--dangerously-bypass-approvals-and-sandbox".into()],
         Harness::Opencode => vec!["--auto".into()],
     }
@@ -1207,12 +1234,50 @@ fn agent_display_name(agent: &Agent) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::display_role;
+    use std::path::Path;
+
+    use serde_json::Value;
+
+    use super::{configured_agent_launch_args, display_role, yolo_agent_args};
+    use crate::config::Harness;
 
     #[test]
     fn formats_agent_roles_for_labels() {
         assert_eq!(display_role("researcher"), "Researcher");
         assert_eq!(display_role("qa"), "QA");
         assert_eq!(display_role("docs_writer"), "Docs Writer");
+    }
+
+    #[test]
+    fn configures_sandboxed_claude_agents() {
+        let state_dir = Path::new("/tmp/cadence-state");
+        let args = configured_agent_launch_args(Harness::Claude, false, true, state_dir);
+
+        assert_eq!(
+            &args[..4],
+            [
+                "--permission-mode",
+                "acceptEdits",
+                "--add-dir",
+                "/tmp/cadence-state"
+            ]
+        );
+        assert_eq!(args[4], "--settings");
+        let settings: Value = serde_json::from_str(&args[5]).unwrap();
+        assert_eq!(settings["sandbox"]["enabled"], true);
+        assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], true);
+        assert_eq!(settings["sandbox"]["allowUnsandboxedCommands"], false);
+        assert_eq!(
+            settings["sandbox"]["filesystem"]["allowWrite"][0],
+            "/tmp/cadence-state"
+        );
+    }
+
+    #[test]
+    fn configures_claude_yolo_mode() {
+        assert_eq!(
+            yolo_agent_args(Harness::Claude, true),
+            ["--dangerously-skip-permissions"]
+        );
     }
 }

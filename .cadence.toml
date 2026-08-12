@@ -19,7 +19,7 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
-# harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
+# harness = "inherit" # claude | codex | opencode | inherit (Lead harness, not its model)
 # model = "provider/model" # Optional; omit to use the selected harness default.
 # reasoning_effort = "medium" # default | low | medium | high | xhigh
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
@@ -52,6 +52,13 @@ harness = "codex"
 model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 version_control_mode = "git-worktree"
+
+[agents.roles.reviewer]
+description = "Reviews code implementation"
+harness = "claude"
+model = "opus"
+reasoning_effort = "high"
+version_control_mode = "shared-checkout"
 
 [agents.roles.qa]
 description = "Validates behavior, tests changes, and investigates regressions"

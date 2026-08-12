@@ -182,33 +182,7 @@ impl Herdr {
         agent_args: &[String],
     ) -> Result<()> {
         self.wait_for_available_shell(pane_id)?;
-        let model = launch_model(harness, model, reasoning_effort)?;
-        let mut args = vec![
-            "agent".to_string(),
-            "start".into(),
-            name.into(),
-            "--kind".into(),
-            harness.as_str().into(),
-            "--pane".into(),
-            pane_id.into(),
-            "--timeout".into(),
-            "120000".into(),
-        ];
-        if model.is_some() || reasoning_effort.as_str().is_some() || !agent_args.is_empty() {
-            args.push("--".into());
-        }
-        if let Some(model) = &model {
-            args.extend(["--model".into(), model.clone()]);
-        }
-        if harness == Harness::Codex
-            && let Some(reasoning_effort) = reasoning_effort.as_str()
-        {
-            args.extend([
-                "--config".into(),
-                format!("model_reasoning_effort=\"{reasoning_effort}\""),
-            ]);
-        }
-        args.extend(agent_args.iter().cloned());
+        let args = start_agent_args(name, harness, pane_id, model, reasoning_effort, agent_args)?;
         for delay in AGENT_PANE_BUSY_RETRY_DELAYS {
             let output = self.output(&args)?;
             if output.status.success() {
@@ -259,7 +233,7 @@ fn launch_model(
     let Some(reasoning_effort) = reasoning_effort.as_str() else {
         return Ok(model.map(str::to_string));
     };
-    if harness == Harness::Codex {
+    if harness != Harness::Opencode {
         return Ok(model.map(str::to_string));
     }
     let model = model.context(
@@ -267,6 +241,46 @@ fn launch_model(
     )?;
     let model = model.split_once('#').map_or(model, |(model, _)| model);
     Ok(Some(format!("{model}#{reasoning_effort}")))
+}
+
+fn start_agent_args(
+    name: &str,
+    harness: Harness,
+    pane_id: &str,
+    model: Option<&str>,
+    reasoning_effort: ReasoningEffort,
+    agent_args: &[String],
+) -> Result<Vec<String>> {
+    let model = launch_model(harness, model, reasoning_effort)?;
+    let mut args = vec![
+        "agent".to_string(),
+        "start".into(),
+        name.into(),
+        "--kind".into(),
+        harness.as_str().into(),
+        "--pane".into(),
+        pane_id.into(),
+        "--timeout".into(),
+        "120000".into(),
+    ];
+    if model.is_some() || reasoning_effort.as_str().is_some() || !agent_args.is_empty() {
+        args.push("--".into());
+    }
+    if let Some(model) = &model {
+        args.extend(["--model".into(), model.clone()]);
+    }
+    if let Some(reasoning_effort) = reasoning_effort.as_str() {
+        match harness {
+            Harness::Claude => args.extend(["--effort".into(), reasoning_effort.into()]),
+            Harness::Codex => args.extend([
+                "--config".into(),
+                format!("model_reasoning_effort=\"{reasoning_effort}\""),
+            ]),
+            Harness::Opencode => {}
+        }
+    }
+    args.extend(agent_args.iter().cloned());
+    Ok(args)
 }
 
 fn lead_label(root: &Path) -> String {
@@ -376,5 +390,39 @@ mod tests {
             Some("openai/gpt-5.2#xhigh")
         );
         assert!(launch_model(Harness::Opencode, None, ReasoningEffort::High).is_err());
+    }
+
+    #[test]
+    fn maps_claude_model_and_reasoning_to_native_flags() {
+        let args = start_agent_args(
+            "reviewer",
+            Harness::Claude,
+            "pane-1",
+            Some("opus"),
+            ReasoningEffort::High,
+            &["--dangerously-skip-permissions".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            [
+                "agent",
+                "start",
+                "reviewer",
+                "--kind",
+                "claude",
+                "--pane",
+                "pane-1",
+                "--timeout",
+                "120000",
+                "--",
+                "--model",
+                "opus",
+                "--effort",
+                "high",
+                "--dangerously-skip-permissions",
+            ]
+        );
     }
 }

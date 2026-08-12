@@ -4,6 +4,7 @@ Cadence is a light Orchestrating plugin for Herdr that provides one **Lead** and
 ## Supported harness
 Supported:
 * Codex
+* Claude Code
 
 
 Supported but untested:
@@ -91,7 +92,7 @@ cleanup_on_success = true # Remove successful agent tabs or worktrees after inte
 
 # [agents.roles.new_role]
 # description = "Handles work that matches this role's specialty"
-# harness = "inherit" # codex | opencode | inherit (Lead harness, not its model)
+# harness = "inherit" # claude | codex | opencode | inherit (Lead harness, not its model)
 # model = "provider/model" # Optional; omit to use the selected harness default.
 # reasoning_effort = "medium" # default | low | medium | high | xhigh
 # version_control_mode = "shared-checkout" # shared-checkout | git-worktree
