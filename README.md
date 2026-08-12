@@ -178,7 +178,6 @@ Later Cadence messages are short status notifications to the Lead or explicit fo
 
 ```sh
 ./scripts/build-local.sh
-herdr plugin link "$PWD"
 cargo test
 ```
 
