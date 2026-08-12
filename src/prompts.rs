@@ -18,45 +18,51 @@ pub fn lead(
     let roles = agents.role_catalog();
     let checkout_guidance = if worktrees_enabled {
         if global_yolo {
-            "Each role's configured version_control_mode fixes its checkout: git-worktree roles are isolated; shared-checkout roles directly share the project checkout. Do not choose a mode when spawning. Every agent has YOLO full host access and must stay strictly within its assigned scope."
+            "Checkout mode is fixed by role: git-worktree is isolated; shared-checkout uses the project checkout. Agents have YOLO access; enforce assigned scopes."
         } else {
-            "Each role's configured version_control_mode fixes its checkout: git-worktree roles are isolated; shared-checkout roles directly share the project checkout. Do not choose a mode when spawning. Isolated Codex agents can write only their worktree and Cadence state."
+            "Checkout mode is fixed by role: git-worktree is isolated; shared-checkout uses the project checkout. Isolated Codex agents can write only their worktree and Cadence state."
         }
     } else if global_yolo {
-        "Agents share the base checkout with global YOLO full host access. Keep their path scopes non-overlapping and strictly bounded."
+        "Agents share the project checkout with YOLO access. Keep scopes bounded and non-overlapping."
     } else {
-        "Agents run in separate tabs but share the base checkout. Keep their path scopes non-overlapping."
+        "Agents share the project checkout in separate tabs. Keep scopes non-overlapping."
     };
     let integration_guidance = if worktrees_enabled {
-        "For an isolated-worktree agent, inspect its report and acceptance evidence, request a focused follow-up if needed, then run `agent integrate <id>`. Shared-checkout agents integrate automatically when configured. Handle routine verification yourself; involve the user only for material scope, destructive actions, or retained conflicts."
+        "For worktree agents, review the report and evidence, request any focused follow-up, then `agent integrate <id>`. Shared-checkout agents auto-integrate when configured."
     } else {
-        "Cadence integrates clean commits automatically when configured."
+        "Clean commits auto-integrate when configured."
     };
     let lead_access = if global_yolo {
-        "Global YOLO is enabled for you and every agent. Full access removes permission prompts but does not authorize destructive, irreversible, security-sensitive, or out-of-scope actions."
+        "YOLO removes permission prompts, not scope or safety limits."
     } else {
         ""
     };
     let dirty_guidance = if checkout_clean {
         ""
     } else {
-        "The base checkout has uncommitted changes. You may inspect them or handle small work directly, but do not create agents until all changes are committed or stashed; Cadence will reject agent creation because agents require a stable committed baseline."
+        "The checkout is dirty: direct work is allowed, but agents require a committed or stashed baseline."
     };
     format!(
-        r#"You are the Lead for Cadence run {run_id}. The user talks only to you. No user task is assigned yet. Do not inspect the repository, run commands, or create agents until the user provides a task; reply briefly that Cadence is ready, then wait. Plan and coordinate implementation. Handle trivial, low-risk work directly when that is faster than coordinating an agent, such as a quick inspection or small single-file edit. Delegate specialized, multi-step, broad, risky, or parallelizable work. Never directly edit a path reserved by an active agent. {checkout_guidance}
+        r#"You are Lead for Cadence run {run_id}; only you talk to the user. Until given a task, reply briefly that Cadence is ready—do not inspect, run commands, or spawn agents.
 
-Available agent roles:
+Coordinate delivery. Do trivial, low-risk work directly; delegate specialized, multi-step, broad, risky, or parallel work. Never edit an active agent's scope. {checkout_guidance}
+
+Roles:
 {roles}
 
-Choose the role whose description best matches each task. Use the configured default role `{agent_default}` when no specialized role is a good match. Use at most {max} concurrent agents with non-overlapping repository-relative scopes. A shared-checkout agent may create a root Markdown artifact named for its display name when useful, but include that path in its assigned scope. Cadence tries each role's ordered runners only when launching fails because of provider availability (credits, quota, rate limit, capacity, or authentication). Once a runner launches, it is pinned: if it later exits or blocks, retain its resources and decide whether to reassign it yourself. Create a JSON request with title, task, scope, acceptance, and role. Then run:
-  {bin} --state-dir {state} --project-root {root} agent spawn --request-file <path>
-Inspect with `agent list`, `agent status <id>`, and `agent report <id>`. Send follow-up work with `agent prompt <id> --prompt-file <path>` or cancel with `agent cancel <id>`. {integration_guidance} After completing and verifying each coherent user-requested change block, stage only task-related paths and create a local commit before reporting completion or continuing. This applies to Lead-authored and integrated agent work. Preserve unrelated working-tree changes; push only when the user asks. Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no agents remain active.
+Pick the best role; default to `{agent_default}`. Run at most {max} agents with non-overlapping repository-relative scopes. Include any shared-checkout root Markdown artifact in scope. Ordered runner fallback applies only to launch-time provider availability (credits, quota, rate limit, capacity, auth); a launched runner stays pinned. Retain failed/blocked resources and decide reassignment.
 
-Use priorities High (Blockers), Mid, Low, and Wish in all Lead-agent and user-facing findings. In review cycles, personally verify High, security, and data-integrity findings; sanity-check non-blocking findings; send the developer one consolidated correction batch; then have the reviewer recheck only changed areas and prior High findings. After a second review, handle remaining small non-High findings directly instead of starting another developer-review cycle.
+Spawn with a JSON request containing title, task, scope, acceptance, and role:
+  {bin} --state-dir {state} --project-root {root} agent spawn --request-file <path>
+Manage with `agent list|status|report`, `agent prompt <id> --prompt-file <path>`, and `agent cancel <id>`. {integration_guidance}
+
+For each coherent change block: verify, stage only task paths, and commit locally before continuing or reporting; this includes Lead and integrated agent work. Preserve unrelated changes; push only on request. Handle routine verification; ask the user only about material scope, destructive actions, or retained conflicts.
+
+Findings use High (Blockers), Mid, Low, or Wish. In review cycles: verify High/security/data-integrity findings, sanity-check the rest, send one consolidated developer correction, and have the reviewer recheck only changed areas and prior Highs. After review two, fix remaining small non-High items directly.
 
 {lead_access}
 {dirty_guidance}
-In user-facing messages, use each spawn result's `display_name`, such as `[Researcher] Review the README`; do not call agents Agent 2 or agent-2. Use agent IDs only in Cadence commands or when needed to disambiguate duplicate names. Do not invent task dependencies or let agents delegate. Keep the user informed of assignments and integrated results."#,
+Use spawn `display_name` in user updates (not Agent 2/agent-2); reserve IDs for commands or disambiguation. Do not invent dependencies or let agents delegate. Report results and stay available: a completed task does not end the run. Use `run finish` only when the user asks to end the session and no agents are active."#,
         run_id = run.id,
         bin = binary.display(),
         state = state_dir.display(),
@@ -134,4 +140,53 @@ If completion returns integrated, exit the agent. If it returns completed, remai
         root = project_root.display(),
         agent_id = agent.id,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    use super::lead;
+    use crate::config::{Config, Harness, ReasoningEffort};
+    use crate::model::{AgentRef, Run, RunStatus};
+
+    #[test]
+    fn keeps_the_default_lead_prompt_compact() {
+        let config = Config::default();
+        let run = Run {
+            id: "run-test".into(),
+            status: RunStatus::Active,
+            base_branch: "main".into(),
+            base_workspace_id: "workspace-test".into(),
+            lead: AgentRef {
+                name: "cadence-lead-test".into(),
+                harness: Harness::Codex,
+                model: None,
+                reasoning_effort: ReasoningEffort::Default,
+                workspace_id: None,
+                tab_id: None,
+                pane_id: None,
+            },
+            created_unix_ms: 0,
+            next_agent: 1,
+            agents: BTreeMap::new(),
+            last_error: None,
+        };
+
+        let prompt = lead(
+            Path::new("/cadence"),
+            Path::new("/state"),
+            Path::new("/project"),
+            &run,
+            &config,
+            true,
+        );
+
+        assert!(
+            prompt.len() < 3_200,
+            "Lead prompt is {} bytes",
+            prompt.len()
+        );
+    }
 }

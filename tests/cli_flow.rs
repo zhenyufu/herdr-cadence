@@ -667,34 +667,24 @@ fi
             "shared-checkout"
         }
     )));
-    assert!(calls.contains(
-        "Use the configured default role `generalist` when no specialized role is a good match"
-    ));
-    assert!(calls.contains("No user task is assigned yet"));
-    assert!(calls.contains("reply briefly that Cadence is ready, then wait"));
-    assert!(calls.contains("Handle trivial, low-risk work directly"));
-    assert!(calls.contains("Never directly edit a path reserved by an active agent"));
-    assert!(calls.contains(
-        "After completing and verifying each coherent user-requested change block, stage only task-related paths and create a local commit"
-    ));
-    assert!(calls.contains("This applies to Lead-authored and integrated agent work"));
+    assert!(calls.contains("Pick the best role; default to `generalist`"));
+    assert!(calls.contains("Until given a task, reply briefly that Cadence is ready"));
+    assert!(calls.contains("Do trivial, low-risk work directly"));
+    assert!(calls.contains("Never edit an active agent's scope"));
+    assert!(calls.contains("For each coherent change block: verify, stage only task paths"));
+    assert!(calls.contains("this includes Lead and integrated agent work"));
+    assert!(calls.contains("Preserve unrelated changes; push only on request"));
+    assert_eq!(calls.contains("The checkout is dirty"), dirty_at_start);
+    assert!(calls.contains("a completed task does not end the run"));
+    assert!(calls.contains("Use `run finish` only when the user asks to end the session"));
+    assert!(calls.contains("Use spawn `display_name` in user updates"));
+    assert!(calls.contains("not Agent 2/agent-2"));
     assert!(
-        calls.contains("Preserve unrelated working-tree changes; push only when the user asks")
+        calls.contains("Ordered runner fallback applies only to launch-time provider availability")
     );
-    assert_eq!(
-        calls.contains("The base checkout has uncommitted changes"),
-        dirty_at_start
-    );
-    assert!(calls.contains("Completing a task or batch does not end the Cadence run"));
-    assert!(calls.contains("only after the user explicitly asks to end the Cadence session"));
-    assert!(calls.contains("use each spawn result's `display_name`"));
-    assert!(calls.contains("do not call agents Agent 2 or agent-2"));
-    assert!(calls.contains("Cadence tries each role's ordered runners only when launching fails"));
+    assert!(calls.contains("Findings use High (Blockers), Mid, Low, or Wish"));
     assert!(calls.contains(
-        "Use priorities High (Blockers), Mid, Low, and Wish in all Lead-agent and user-facing findings"
-    ));
-    assert!(calls.contains(
-        "send the developer one consolidated correction batch; then have the reviewer recheck only changed areas and prior High findings"
+        "send one consolidated developer correction, and have the reviewer recheck only changed areas and prior Highs"
     ));
     assert!(calls.contains("Label communicated findings as High (Blockers), Mid, Low, or Wish"));
     let lead_launch =
@@ -702,11 +692,11 @@ fi
     assert!(calls.contains(lead_launch));
     if global_yolo {
         assert!(calls.contains(&format!("{lead_launch} --auto")));
-        assert!(calls.contains("Global YOLO is enabled for you and every agent"));
+        assert!(calls.contains("YOLO removes permission prompts, not scope or safety limits"));
     } else {
         assert!(!calls.contains(&format!("{lead_launch} --auto")));
     }
-    assert!(calls.contains("Each role's configured version_control_mode fixes its checkout"));
+    assert!(calls.contains("Checkout mode is fixed by role"));
     if use_worktree {
         assert_eq!(calls.matches("tab create --workspace base-ws").count(), 1);
         assert!(calls.contains(&format!(
