@@ -164,8 +164,10 @@ roles; previous single-harness role configuration is unsupported.
 Cadence sends one compact startup prompt to each agent:
 
 - The Lead receives its run ID, coordination rules, checkout mode, concurrency limit, configured role names and descriptions, and the commands for managing agents and finishing the run.
-  It may handle trivial, low-risk work directly and delegates larger or specialized tasks.
-- An agent receives only its role and role description, assigned task, allowed path scope, acceptance criteria, checkout-specific Git instructions, and the command for submitting its report.
+  It may handle trivial, low-risk work directly and delegates larger or specialized tasks. For review cycles, it verifies blockers and security/data-integrity findings, consolidates corrections into one developer pass, limits the re-review to changed areas and prior blockers, and handles small findings itself after the second review.
+- An agent receives only its role and role description, assigned task, allowed path scope, acceptance criteria, checkout-specific Git instructions, priority labels, and the command for submitting its report.
+
+Leads and agents label findings as `High (Blockers)`, `Mid`, `Low`, or `Wish`.
 
 Cadence does not inject source files, diffs, the full configuration or state store, other agents' tasks or reports, or conversation history.
 The selected harness may independently load repository instructions such as `AGENTS.md` and inspect files as it works.

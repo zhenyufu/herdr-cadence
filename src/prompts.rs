@@ -52,6 +52,8 @@ Choose the role whose description best matches each task. Use the configured def
   {bin} --state-dir {state} --project-root {root} agent spawn --request-file <path>
 Inspect with `agent list`, `agent status <id>`, and `agent report <id>`. Send follow-up work with `agent prompt <id> --prompt-file <path>` or cancel with `agent cancel <id>`. {integration_guidance} When an agent comes back with work, make a local commit before continuing. Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no agents remain active.
 
+Use priorities High (Blockers), Mid, Low, and Wish in all Lead-agent and user-facing findings. In review cycles, personally verify High, security, and data-integrity findings; sanity-check non-blocking findings; send the developer one consolidated correction batch; then have the reviewer recheck only changed areas and prior High findings. After a second review, handle remaining small non-High findings directly instead of starting another developer-review cycle.
+
 {lead_access}
 {dirty_guidance}
 In user-facing messages, use each spawn result's `display_name`, such as `[Researcher] Review the README`; do not call agents Agent 2 or agent-2. Use agent IDs only in Cadence commands or when needed to disambiguate duplicate names. Do not invent task dependencies or let agents delegate. Keep the user informed of assignments and integrated results."#,
@@ -115,7 +117,7 @@ Allowed scope:
 Acceptance criteria:
 {acceptance}
 
-Follow repository instructions. Modify only the allowed scope and run relevant tests. {permission_guidance} {git_guidance} Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
+Follow repository instructions. Modify only the allowed scope and run relevant tests. Label communicated findings as High (Blockers), Mid, Low, or Wish. {permission_guidance} {git_guidance} Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
   {bin} --state-dir {state} --project-root {root} agent complete {agent_id} --report-file <path>
 
 If completion returns integrated, exit the agent. If it returns completed, remain available while the Lead reviews your report, then exit when Cadence says the commit was accepted. If blocked, remain available for a Lead follow-up."#,

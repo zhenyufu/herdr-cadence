@@ -671,6 +671,13 @@ fi
     assert!(calls.contains("use each spawn result's `display_name`"));
     assert!(calls.contains("do not call agents Agent 2 or agent-2"));
     assert!(calls.contains("Cadence tries each role's ordered runners only when launching fails"));
+    assert!(calls.contains(
+        "Use priorities High (Blockers), Mid, Low, and Wish in all Lead-agent and user-facing findings"
+    ));
+    assert!(calls.contains(
+        "send the developer one consolidated correction batch; then have the reviewer recheck only changed areas and prior High findings"
+    ));
+    assert!(calls.contains("Label communicated findings as High (Blockers), Mid, Low, or Wish"));
     let lead_launch =
         "--kind opencode --pane pane-lead --timeout 120000 -- --model openai/lead-model#high";
     assert!(calls.contains(lead_launch));
