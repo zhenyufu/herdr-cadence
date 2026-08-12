@@ -687,6 +687,30 @@ fi
     assert_eq!(completed["report"]["changed_paths"][0], "src/api/mod.rs");
     if use_worktree {
         assert!(!repo.path().join("src/api/mod.rs").exists());
+        fs::write(
+            &request,
+            r#"{"title":"Overlap API","task":"Change the API again","scope":["src/api"],"acceptance":["Tests pass"],"role":"qa"}"#,
+        )
+        .unwrap();
+        let overlapping_spawn = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            .args([
+                "--state-dir",
+                state.path().to_str().unwrap(),
+                "--project-root",
+                repo.path().to_str().unwrap(),
+                "agent",
+                "spawn",
+                "--request-file",
+                request.to_str().unwrap(),
+            ])
+            .env("HERDR_BIN_PATH", &fake)
+            .output()
+            .unwrap();
+        assert!(!overlapping_spawn.status.success());
+        assert!(
+            String::from_utf8_lossy(&overlapping_spawn.stderr)
+                .contains("scope overlaps active agent agent-1")
+        );
         let integrate = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
             .args([
                 "--state-dir",
@@ -782,10 +806,20 @@ fi
     let calls = fs::read_to_string(&log).unwrap();
     assert!(calls.contains("agent send-keys cadence-"));
     assert!(calls.contains("ctrl+c"));
+    let completion_notification = calls.rfind("agent prompt cadence-lead-").unwrap();
+    let agent_interrupt = calls.rfind("agent send-keys cadence-").unwrap();
+    assert!(
+        completion_notification < agent_interrupt,
+        "Lead completion notification must precede interrupting the completing agent"
+    );
     if use_worktree {
         assert!(calls.contains("worktree remove --workspace agent-ws --force"));
     } else {
-        assert!(calls.contains("tab close tab-agent"));
+        let tab_close = calls.rfind("tab close tab-agent").unwrap();
+        assert!(
+            completion_notification < tab_close,
+            "Lead completion notification must precede closing the completing agent's tab"
+        );
     }
 }
 

@@ -120,6 +120,18 @@ impl AgentStatus {
         )
     }
 
+    pub fn reserves_scope(&self) -> bool {
+        matches!(
+            self,
+            Self::Starting
+                | Self::Working
+                | Self::Blocked
+                | Self::Completed
+                | Self::Integrating
+                | Self::Conflict
+        )
+    }
+
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -257,6 +269,27 @@ pub fn path_within_scope(path: &str, scope: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reserves_scopes_until_work_is_integrated_or_abandoned() {
+        for status in [
+            AgentStatus::Starting,
+            AgentStatus::Working,
+            AgentStatus::Blocked,
+            AgentStatus::Completed,
+            AgentStatus::Integrating,
+            AgentStatus::Conflict,
+        ] {
+            assert!(status.reserves_scope(), "{status:?} should reserve scope");
+        }
+        for status in [
+            AgentStatus::Failed,
+            AgentStatus::Cancelled,
+            AgentStatus::Integrated,
+        ] {
+            assert!(!status.reserves_scope(), "{status:?} should release scope");
+        }
+    }
 
     #[test]
     fn normalizes_and_rejects_unsafe_scope() {

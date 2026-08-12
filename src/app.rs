@@ -300,7 +300,7 @@ impl App {
             if let Some(conflict) = run
                 .agents
                 .values()
-                .filter(|a| a.status.occupies_slot())
+                .filter(|a| a.status.reserves_scope())
                 .find(|a| scopes_overlap(&a.scope, &request.scope))
             {
                 bail!(
@@ -608,7 +608,7 @@ impl App {
                 let message = if agent.use_worktree {
                     if config.git.cleanup_on_success {
                         format!(
-                            "{} integrated successfully (internal ID: {agent_id}); its agent and worktree were cleaned up.",
+                            "{} integrated successfully (internal ID: {agent_id}); its agent and worktree will be cleaned up.",
                             agent_display_name(&agent)
                         )
                     } else {
@@ -619,7 +619,7 @@ impl App {
                     }
                 } else if config.git.cleanup_on_success {
                     format!(
-                        "{} completed successfully on the shared base branch (internal ID: {agent_id}); its agent and tab were cleaned up.",
+                        "{} completed successfully on the shared base branch (internal ID: {agent_id}); its agent and tab will be cleaned up.",
                         agent_display_name(&agent)
                     )
                 } else {
@@ -628,13 +628,13 @@ impl App {
                         agent_display_name(&agent)
                     )
                 };
+                self.notify(&key, &message);
                 if config.git.cleanup_on_success {
                     if self.herdr.agent_exists(&agent.agent_name) {
                         let _ = self.herdr.send_ctrl_c(&agent.agent_name);
                     }
                     self.cleanup_agent(&key, agent_id)?;
                 }
-                self.notify(&key, &message);
                 self.agent_status(agent_id)
             }
             Err(error) => {
