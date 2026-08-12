@@ -50,7 +50,7 @@ Available agent roles:
 
 Choose the role whose description best matches each task. Use the configured default role `{agent_default}` when no specialized role is a good match. Use at most {max} concurrent agents with non-overlapping repository-relative scopes. A shared-checkout agent may create a root Markdown artifact named for its display name when useful, but include that path in its assigned scope. Create a JSON request with title, task, scope, acceptance, and role; harness, model, and reasoning_effort are optional overrides. Then run:
   {bin} --state-dir {state} --project-root {root} agent spawn --request-file <path>
-Inspect with `agent list`, `agent status <id>`, and `agent report <id>`. Send follow-up work with `agent prompt <id> --prompt-file <path>` or cancel with `agent cancel <id>`. {integration_guidance} Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no agents remain active.
+Inspect with `agent list`, `agent status <id>`, and `agent report <id>`. Send follow-up work with `agent prompt <id> --prompt-file <path>` or cancel with `agent cancel <id>`. {integration_guidance} When an agent comes back with work, make a local commit before continuing. Resolve retained failures/conflicts with the user. Completing a task or batch does not end the Cadence run: report the result and remain available for follow-up requests. Run `run finish` only after the user explicitly asks to end the Cadence session and no agents remain active.
 
 {lead_access}
 {dirty_guidance}
