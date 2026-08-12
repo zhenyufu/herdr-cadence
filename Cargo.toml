@@ -1,6 +1,6 @@
 [package]
 name = "herdr-cadence"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "Project-local Claude Code, Codex, and OpenCode orchestration for Herdr"
