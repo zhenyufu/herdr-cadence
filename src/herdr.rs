@@ -73,6 +73,22 @@ impl Herdr {
             .is_ok_and(|output| output.status.success())
     }
 
+    pub fn agent_tab_id(&self, name: &str) -> Result<Option<String>> {
+        let output = self.output(["agent", "get", name])?;
+        if !output.status.success() {
+            if has_error_code(&output, "agent_not_found") {
+                return Ok(None);
+            }
+            return Err(command_error(&output));
+        }
+        let value: Value =
+            serde_json::from_slice(&output.stdout).context("Herdr returned invalid agent JSON")?;
+        Ok(value
+            .pointer("/result/agent/tab_id")
+            .and_then(Value::as_str)
+            .map(str::to_string))
+    }
+
     pub fn workspace_exists(&self, workspace_id: &str) -> bool {
         self.output(["workspace", "get", workspace_id])
             .is_ok_and(|output| output.status.success())
@@ -222,6 +238,17 @@ impl Herdr {
     pub fn close_tab(&self, tab_id: &str) -> Result<()> {
         self.checked(["tab", "close", tab_id])?;
         Ok(())
+    }
+
+    pub fn tab_exists(&self, tab_id: &str) -> Result<bool> {
+        let output = self.output(["tab", "get", tab_id])?;
+        if output.status.success() {
+            Ok(true)
+        } else if has_error_code(&output, "tab_not_found") {
+            Ok(false)
+        } else {
+            Err(command_error(&output))
+        }
     }
 }
 

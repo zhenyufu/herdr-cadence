@@ -664,7 +664,16 @@ impl App {
                     if self.herdr.agent_exists(&agent.agent_name) {
                         let _ = self.herdr.send_ctrl_c(&agent.agent_name);
                     }
-                    self.cleanup_agent(&key, agent_id)?;
+                    if let Err(error) = self.cleanup_agent(&key, agent_id) {
+                        let warning = format!(
+                            "{} integrated, but cleanup failed and will be retried at startup (internal ID: {agent_id}): {error:#}",
+                            agent_display_name(&agent)
+                        );
+                        self.notify(&key, &warning);
+                        let mut status = self.agent_status(agent_id)?;
+                        status["cleanup_warning"] = Value::String(warning);
+                        return Ok(status);
+                    }
                 }
                 self.agent_status(agent_id)
             }
@@ -839,9 +848,13 @@ impl App {
     pub fn startup(&self) -> Result<Value> {
         let store = self.state.read()?;
         let mut reconciled = 0usize;
+        let mut cleanup_warnings = Vec::new();
         for (key, project) in store.projects {
             let root = PathBuf::from(&project.root);
-            if !Config::load(&root).is_ok_and(|config| config.enabled) {
+            let Ok(config) = Config::load(&root) else {
+                continue;
+            };
+            if !config.enabled {
                 continue;
             }
             let Some(run_id) = project.active_run else {
@@ -851,7 +864,22 @@ impl App {
                 continue;
             };
             for agent in run.agents.values() {
-                if !self.herdr.agent_exists(&agent.agent_name) {
+                let agent_exists = self.herdr.agent_exists(&agent.agent_name);
+                if config.git.cleanup_on_success
+                    && agent.status == AgentStatus::Integrated
+                    && (agent.workspace_id.is_some() || agent.tab_id.is_some() || agent_exists)
+                {
+                    match self.cleanup_agent(&key, &agent.id) {
+                        Ok(()) => reconciled += 1,
+                        Err(error) => cleanup_warnings.push(format!(
+                            "{} (internal ID: {}): {error:#}",
+                            agent_display_name(agent),
+                            agent.id
+                        )),
+                    }
+                    continue;
+                }
+                if !agent_exists {
                     self.handle_agent_exit(&key, &run_id, &agent.id, agent)?;
                     reconciled += 1;
                 }
@@ -864,7 +892,7 @@ impl App {
                 )?;
             }
         }
-        Ok(json!({"reconciled": reconciled}))
+        Ok(json!({"reconciled": reconciled, "cleanup_warnings": cleanup_warnings}))
     }
 
     fn enabled_config(&self) -> Result<Config> {
@@ -1060,8 +1088,27 @@ impl App {
     fn cleanup_agent(&self, key: &str, agent_id: &str) -> Result<()> {
         let run = self.active_run_snapshot(key)?;
         let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
-        if let Some(tab_id) = agent.tab_id.as_deref() {
-            let _ = self.herdr.close_tab(tab_id);
+        let tab_id = match agent.tab_id.clone() {
+            Some(tab_id) => Some(tab_id),
+            None => self.herdr.agent_tab_id(&agent.agent_name)?,
+        };
+        if let Some(tab_id) = tab_id
+            && let Err(close_error) = self.herdr.close_tab(&tab_id)
+        {
+            match self.herdr.tab_exists(&tab_id) {
+                Ok(false) => {}
+                Ok(true) => {
+                    return Err(close_error)
+                        .with_context(|| format!("failed to close agent tab {tab_id}"));
+                }
+                Err(check_error) => {
+                    return Err(close_error).with_context(|| {
+                        format!(
+                            "failed to close agent tab {tab_id}; could not confirm whether it still exists: {check_error:#}"
+                        )
+                    });
+                }
+            }
         }
         if agent.use_worktree {
             if let Some(workspace_id) = agent.workspace_id.as_deref()

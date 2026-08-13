@@ -293,32 +293,37 @@ fn rejects_agent_runner_overrides() {
 
 #[test]
 fn runs_agent_in_shared_checkout_by_default() {
-    run_agent_flow(false, false, false, false, false);
+    run_agent_flow(false, false, false, false, false, false);
 }
 
 #[test]
 fn runs_agent_in_configured_worktree() {
-    run_agent_flow(true, false, false, false, false);
+    run_agent_flow(true, false, false, false, false, false);
+}
+
+#[test]
+fn retries_integrated_worktree_agent_tab_cleanup_on_startup() {
+    run_agent_flow(true, false, false, false, false, true);
 }
 
 #[test]
 fn runs_every_agent_in_global_yolo() {
-    run_agent_flow(false, true, false, false, false);
+    run_agent_flow(false, true, false, false, false, false);
 }
 
 #[test]
 fn starts_dirty_but_blocks_agents_until_clean() {
-    run_agent_flow(true, false, true, false, false);
+    run_agent_flow(true, false, true, false, false, false);
 }
 
 #[test]
 fn rejects_an_earlier_out_of_scope_shared_checkout_commit() {
-    run_agent_flow(false, false, false, true, false);
+    run_agent_flow(false, false, false, true, false, false);
 }
 
 #[test]
 fn falls_back_to_the_next_runner_after_credit_exhaustion() {
-    run_agent_flow(false, false, false, false, true);
+    run_agent_flow(false, false, false, false, true, false);
 }
 
 fn run_agent_flow(
@@ -327,6 +332,7 @@ fn run_agent_flow(
     dirty_at_start: bool,
     create_out_of_scope_commit: bool,
     force_primary_credit_failure: bool,
+    force_tab_cleanup_retry: bool,
 ) {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
@@ -383,6 +389,7 @@ fn run_agent_flow(
     let shell_ready_once = fake_dir.path().join("shell-ready-once");
     let lead_started = fake_dir.path().join("lead-started");
     let primary_credit_failure = fake_dir.path().join("primary-credit-failure");
+    let tab_close_failure = fake_dir.path().join("tab-close-failure");
     let agent_path = fake_dir.path().join("agent");
     fs::create_dir(&agent_path).unwrap();
     let script = format!(
@@ -397,7 +404,7 @@ if [ "$1 $2" = "agent get" ]; then
       fi
       ;;
     cadence-??????-a*)
-      printf '%s\n' '{{"id":"test","result":{{}}}}'
+      printf '%s\n' '{{"id":"test","result":{{"agent":{{"tab_id":"agent-tab"}}}}}}'
       exit 0
       ;;
   esac
@@ -446,6 +453,13 @@ elif [ "$1 $2" = "tab create" ]; then
   printf '%s\n' "{{\"id\":\"test\",\"result\":{{\"tab\":{{\"tab_id\":\"$tab_id\"}},\"root_pane\":{{\"pane_id\":\"$pane_id\"}}}}}}"
 elif [ "$1 $2" = "worktree create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"agent-ws"}},"tab":{{"tab_id":"agent-tab"}},"root_pane":{{"pane_id":"pane-agent"}},"worktree":{{"path":"{}"}}}}}}'
+elif [ "$1 $2" = "tab close" ]; then
+  if [ -e '{}' ]; then
+    rm '{}'
+    printf '%s\n' 'forced tab cleanup failure' >&2
+    exit 1
+  fi
+  printf '%s\n' '{{"id":"test","result":{{}}}}'
 elif [ "$1 $2" = "worktree remove" ]; then
   if [ "${{CADENCE_TEST_FAIL_WORKTREE_REMOVE:-}}" = "1" ]; then
     printf '%s\n' 'forced worktree cleanup failure' >&2
@@ -466,6 +480,8 @@ fi
         lead_started.display(),
         primary_credit_failure.display(),
         agent_path.display(),
+        tab_close_failure.display(),
+        tab_close_failure.display(),
         repo.path().display(),
         agent_path.display()
     );
@@ -893,6 +909,9 @@ fi
             String::from_utf8_lossy(&overlapping_spawn.stderr)
                 .contains("scope overlaps active agent agent-1")
         );
+        if force_tab_cleanup_retry {
+            fs::write(&tab_close_failure, "1\n").unwrap();
+        }
         let integrate = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
             .args([
                 "--state-dir",
@@ -906,12 +925,72 @@ fi
             .env("HERDR_BIN_PATH", &fake)
             .output()
             .unwrap();
-        assert!(
-            integrate.status.success(),
-            "{}",
-            String::from_utf8_lossy(&integrate.stderr)
-        );
-        completed = serde_json::from_slice(&integrate.stdout).unwrap();
+        if force_tab_cleanup_retry {
+            assert!(integrate.status.success());
+            let integration: serde_json::Value = serde_json::from_slice(&integrate.stdout).unwrap();
+            assert_eq!(integration["status"], "integrated");
+            assert!(
+                integration["cleanup_warning"]
+                    .as_str()
+                    .unwrap()
+                    .contains("failed to close agent tab agent-tab")
+            );
+            let retained = cadence(repo.path(), state.path(), &["agent", "status", "agent-1"]);
+            assert!(retained.status.success());
+            let retained: serde_json::Value = serde_json::from_slice(&retained.stdout).unwrap();
+            assert_eq!(retained["status"], "integrated");
+            assert_eq!(retained["tab_id"], "agent-tab");
+            assert_eq!(retained["workspace_id"], "agent-ws");
+
+            let startup = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+                .args([
+                    "--state-dir",
+                    state.path().to_str().unwrap(),
+                    "--project-root",
+                    repo.path().to_str().unwrap(),
+                    "startup",
+                ])
+                .env("HERDR_BIN_PATH", &fake)
+                .output()
+                .unwrap();
+            assert!(
+                startup.status.success(),
+                "{}",
+                String::from_utf8_lossy(&startup.stderr)
+            );
+            let startup: serde_json::Value = serde_json::from_slice(&startup.stdout).unwrap();
+            assert_eq!(startup["reconciled"], 1);
+            assert!(startup["cleanup_warnings"].as_array().unwrap().is_empty());
+
+            let cleaned = cadence(repo.path(), state.path(), &["agent", "status", "agent-1"]);
+            completed = serde_json::from_slice(&cleaned.stdout).unwrap();
+            assert!(completed["tab_id"].is_null());
+            assert!(completed["workspace_id"].is_null());
+            assert!(completed["checkout_path"].is_null());
+
+            let stale_startup = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+                .args([
+                    "--state-dir",
+                    state.path().to_str().unwrap(),
+                    "--project-root",
+                    repo.path().to_str().unwrap(),
+                    "startup",
+                ])
+                .env("HERDR_BIN_PATH", &fake)
+                .output()
+                .unwrap();
+            assert!(stale_startup.status.success());
+            let stale_startup: serde_json::Value =
+                serde_json::from_slice(&stale_startup.stdout).unwrap();
+            assert_eq!(stale_startup["reconciled"], 1);
+        } else {
+            assert!(
+                integrate.status.success(),
+                "{}",
+                String::from_utf8_lossy(&integrate.stderr)
+            );
+            completed = serde_json::from_slice(&integrate.stdout).unwrap();
+        }
         assert_eq!(completed["status"], "integrated");
     }
     assert_eq!(
@@ -1006,13 +1085,21 @@ fi
         "Lead completion notification must precede interrupting the completing agent"
     );
     if use_worktree {
-        let tab_close = calls.rfind("tab close agent-tab").unwrap();
+        let tab_close = if force_tab_cleanup_retry {
+            calls.match_indices("tab close agent-tab").nth(1).unwrap().0
+        } else {
+            calls.rfind("tab close agent-tab").unwrap()
+        };
         let worktree_remove = calls
             .rfind("worktree remove --workspace agent-ws --force")
             .unwrap();
         assert!(
             tab_close < worktree_remove,
             "The worktree-backed agent tab must close before its workspace is removed"
+        );
+        assert_eq!(
+            calls.matches("tab close agent-tab").count(),
+            if force_tab_cleanup_retry { 3 } else { 1 }
         );
     } else {
         let tab_close = calls.rfind("tab close tab-agent").unwrap();
