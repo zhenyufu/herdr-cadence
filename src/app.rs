@@ -16,6 +16,8 @@ use crate::model::{
 use crate::prompts;
 use crate::state::{StateStore, project_key};
 
+const MAX_CLEANUP_ATTEMPTS: u8 = 2;
+
 pub struct App {
     pub root: PathBuf,
     pub state: StateStore,
@@ -349,6 +351,7 @@ impl App {
                 observed_agent_status: None,
                 report: None,
                 error: None,
+                cleanup_attempts: 0,
             };
             run.agents.insert(id, agent.clone());
             Ok(agent)
@@ -666,7 +669,7 @@ impl App {
                     }
                     if let Err(error) = self.cleanup_agent(&key, agent_id) {
                         let warning = format!(
-                            "{} integrated, but cleanup failed and will be retried at startup (internal ID: {agent_id}): {error:#}",
+                            "{} integrated, but cleanup failed and will be retried when the Lead is next idle (internal ID: {agent_id}): {error:#}",
                             agent_display_name(&agent)
                         );
                         self.notify(&key, &warning);
@@ -788,6 +791,61 @@ impl App {
             .get("pane_id")
             .and_then(Value::as_str)
             .context("event omitted pane_id")?;
+        if let Some((key, run_id, run)) = self.find_run_by_lead_pane(pane_id)? {
+            let project_root = PathBuf::from(self.project_root_for_key(&key)?);
+            let config = Config::load(&project_root)?;
+            if !config.enabled {
+                return Ok(json!({"ignored": true, "reason": "project is not enabled"}));
+            }
+            if event_name != "pane.agent_status_changed"
+                || !matches!(
+                    data.get("agent_status").and_then(Value::as_str),
+                    Some("idle" | "done")
+                )
+            {
+                return Ok(json!({"handled": true, "lead": true, "event": event_name}));
+            }
+            if run.agents.values().any(agent_has_pending_work) {
+                return Ok(json!({
+                    "handled": true,
+                    "lead": true,
+                    "event": event_name,
+                    "cleanup_deferred": true
+                }));
+            }
+            let pending = run
+                .agents
+                .values()
+                .filter(|agent| {
+                    agent.status == AgentStatus::Integrated
+                        && agent.cleanup_attempts == 1
+                        && (agent.workspace_id.is_some() || agent.tab_id.is_some())
+                })
+                .map(|agent| agent.id.clone())
+                .collect::<Vec<_>>();
+            let mut reconciled = 0usize;
+            let mut cleanup_warnings = Vec::new();
+            for agent_id in pending {
+                match self.cleanup_agent(&key, &agent_id) {
+                    Ok(()) => reconciled += 1,
+                    Err(error) => {
+                        let warning = format!(
+                            "Agent {agent_id} cleanup retry failed; automatic cleanup has stopped and manual cleanup is required: {error:#}"
+                        );
+                        self.notify(&key, &warning);
+                        cleanup_warnings.push(warning);
+                    }
+                }
+            }
+            return Ok(json!({
+                "handled": true,
+                "lead": true,
+                "run_id": run_id,
+                "event": event_name,
+                "reconciled": reconciled,
+                "cleanup_warnings": cleanup_warnings
+            }));
+        }
         let Some((key, run_id, agent_id, agent)) = self.find_agent_by_pane(pane_id)? else {
             return Ok(json!({"ignored": true, "reason": "pane is not owned by Cadence"}));
         };
@@ -867,6 +925,7 @@ impl App {
                 let agent_exists = self.herdr.agent_exists(&agent.agent_name);
                 if config.git.cleanup_on_success
                     && agent.status == AgentStatus::Integrated
+                    && agent.cleanup_attempts == 0
                     && (agent.workspace_id.is_some() || agent.tab_id.is_some() || agent_exists)
                 {
                     match self.cleanup_agent(&key, &agent.id) {
@@ -1046,6 +1105,22 @@ impl App {
         Ok(None)
     }
 
+    fn find_run_by_lead_pane(&self, pane_id: &str) -> Result<Option<(String, String, Run)>> {
+        let store = self.state.read()?;
+        for (key, project) in store.projects {
+            let Some(run_id) = project.active_run else {
+                continue;
+            };
+            let Some(run) = project.runs.get(&run_id) else {
+                continue;
+            };
+            if run.lead.pane_id.as_deref() == Some(pane_id) {
+                return Ok(Some((key, run_id, run.clone())));
+            }
+        }
+        Ok(None)
+    }
+
     fn project_root_for_key(&self, key: &str) -> Result<String> {
         self.state
             .read()?
@@ -1062,12 +1137,7 @@ impl App {
         agent_id: &str,
         agent: &Agent,
     ) -> Result<()> {
-        if agent.status == AgentStatus::Integrated {
-            let root = PathBuf::from(self.project_root_for_key(key)?);
-            if Config::load(&root).is_ok_and(|config| config.git.cleanup_on_success) {
-                self.cleanup_agent(key, agent_id)?;
-            }
-        } else if !agent.status.is_terminal() {
+        if agent.status != AgentStatus::Integrated && !agent.status.is_terminal() {
             self.state.update(|store| {
                 let stored = agent_mut(run_mut(store, key, run_id)?, agent_id)?;
                 stored.status = AgentStatus::Failed;
@@ -1088,45 +1158,59 @@ impl App {
     fn cleanup_agent(&self, key: &str, agent_id: &str) -> Result<()> {
         let run = self.active_run_snapshot(key)?;
         let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
-        let tab_id = match agent.tab_id.clone() {
-            Some(tab_id) => Some(tab_id),
-            None => self.herdr.agent_tab_id(&agent.agent_name)?,
-        };
-        if let Some(tab_id) = tab_id
-            && let Err(close_error) = self.herdr.close_tab(&tab_id)
-        {
-            match self.herdr.tab_exists(&tab_id) {
-                Ok(false) => {}
-                Ok(true) => {
-                    return Err(close_error)
-                        .with_context(|| format!("failed to close agent tab {tab_id}"));
-                }
-                Err(check_error) => {
-                    return Err(close_error).with_context(|| {
+        let attempt = next_cleanup_attempt(agent.cleanup_attempts)?;
+        let result = (|| -> Result<()> {
+            let tab_id = match agent.tab_id.clone() {
+                Some(tab_id) => Some(tab_id),
+                None => self.herdr.agent_tab_id(&agent.agent_name)?,
+            };
+            if let Some(tab_id) = tab_id
+                && let Err(close_error) = self.herdr.close_tab(&tab_id)
+            {
+                match self.herdr.tab_exists(&tab_id) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        return Err(close_error)
+                            .with_context(|| format!("failed to close agent tab {tab_id}"));
+                    }
+                    Err(check_error) => {
+                        return Err(close_error).with_context(|| {
                         format!(
                             "failed to close agent tab {tab_id}; could not confirm whether it still exists: {check_error:#}"
                         )
                     });
+                    }
                 }
             }
-        }
-        if agent.use_worktree {
-            if let Some(workspace_id) = agent.workspace_id.as_deref()
-                && self.herdr.workspace_exists(workspace_id)
-            {
-                self.herdr.remove_worktree(workspace_id)?;
+            if agent.use_worktree {
+                if let Some(workspace_id) = agent.workspace_id.as_deref()
+                    && self.herdr.workspace_exists(workspace_id)
+                {
+                    self.herdr.remove_worktree(workspace_id)?;
+                }
+                let root = PathBuf::from(self.project_root_for_key(key)?);
+                git::delete_branch(&root, &agent.branch)?;
             }
-            let root = PathBuf::from(self.project_root_for_key(key)?);
-            git::delete_branch(&root, &agent.branch)?;
-        }
-        self.state.update(|store| {
-            let stored = agent_mut(active_run_mut(store, key)?, agent_id)?;
-            stored.workspace_id = None;
-            stored.tab_id = None;
-            stored.pane_id = None;
-            stored.checkout_path = None;
+            self.state.update(|store| {
+                let stored = agent_mut(active_run_mut(store, key)?, agent_id)?;
+                stored.workspace_id = None;
+                stored.tab_id = None;
+                stored.pane_id = None;
+                stored.checkout_path = None;
+                stored.cleanup_attempts = 0;
+                Ok(())
+            })?;
             Ok(())
-        })?;
+        })();
+        if let Err(error) = result {
+            self.state.update(|store| {
+                agent_mut(active_run_mut(store, key)?, agent_id)?.cleanup_attempts = attempt;
+                Ok(())
+            })?;
+            return Err(error).context(format!(
+                "cleanup attempt {attempt} of {MAX_CLEANUP_ATTEMPTS} failed"
+            ));
+        }
         Ok(())
     }
 }
@@ -1205,6 +1289,26 @@ fn is_runner_availability_failure(error: &anyhow::Error) -> bool {
         let message = cause.to_string().to_ascii_lowercase();
         MARKERS.iter().any(|marker| message.contains(marker))
     })
+}
+
+fn next_cleanup_attempt(failed_attempts: u8) -> Result<u8> {
+    ensure!(
+        failed_attempts < MAX_CLEANUP_ATTEMPTS,
+        "automatic cleanup limit reached after {MAX_CLEANUP_ATTEMPTS} failed attempts; manual cleanup is required"
+    );
+    Ok(failed_attempts + 1)
+}
+
+fn agent_has_pending_work(agent: &Agent) -> bool {
+    matches!(
+        agent.status,
+        AgentStatus::Starting
+            | AgentStatus::Working
+            | AgentStatus::Blocked
+            | AgentStatus::Completed
+            | AgentStatus::Integrating
+            | AgentStatus::Conflict
+    )
 }
 
 fn agent_mut<'a>(run: &'a mut Run, agent_id: &str) -> Result<&'a mut Agent> {
@@ -1340,7 +1444,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        configured_agent_launch_args, display_role, is_runner_availability_failure, yolo_agent_args,
+        configured_agent_launch_args, display_role, is_runner_availability_failure,
+        next_cleanup_attempt, yolo_agent_args,
     };
     use crate::config::Harness;
 
@@ -1392,5 +1497,12 @@ mod tests {
         assert!(!is_runner_availability_failure(&anyhow::anyhow!(
             "agent launch arguments are invalid"
         )));
+    }
+
+    #[test]
+    fn limits_cleanup_to_an_initial_attempt_and_one_retry() {
+        assert_eq!(next_cleanup_attempt(0).unwrap(), 1);
+        assert_eq!(next_cleanup_attempt(1).unwrap(), 2);
+        assert!(next_cleanup_attempt(2).is_err());
     }
 }

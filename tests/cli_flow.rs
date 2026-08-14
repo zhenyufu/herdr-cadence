@@ -302,7 +302,7 @@ fn runs_agent_in_configured_worktree() {
 }
 
 #[test]
-fn retries_integrated_worktree_agent_tab_cleanup_on_startup() {
+fn retries_integrated_worktree_agent_cleanup_when_lead_becomes_idle() {
     run_agent_flow(true, false, false, false, false, true);
 }
 
@@ -910,6 +910,25 @@ fi
                 .contains("scope overlaps active agent agent-1")
         );
         if force_tab_cleanup_retry {
+            let deferred = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+                .args([
+                    "--state-dir",
+                    state.path().to_str().unwrap(),
+                    "--project-root",
+                    repo.path().to_str().unwrap(),
+                    "event",
+                ])
+                .env("HERDR_BIN_PATH", &fake)
+                .env("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+                .env(
+                    "HERDR_PLUGIN_EVENT_JSON",
+                    r#"{"event":"pane.agent_status_changed","data":{"pane_id":"pane-lead","agent_status":"idle"}}"#,
+                )
+                .output()
+                .unwrap();
+            assert!(deferred.status.success());
+            let deferred: serde_json::Value = serde_json::from_slice(&deferred.stdout).unwrap();
+            assert_eq!(deferred["cleanup_deferred"], true);
             fs::write(&tab_close_failure, "1\n").unwrap();
         }
         let integrate = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
@@ -941,26 +960,33 @@ fi
             assert_eq!(retained["status"], "integrated");
             assert_eq!(retained["tab_id"], "agent-tab");
             assert_eq!(retained["workspace_id"], "agent-ws");
+            assert_eq!(retained["cleanup_attempts"], 1);
 
-            let startup = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+            let idle = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
                 .args([
                     "--state-dir",
                     state.path().to_str().unwrap(),
                     "--project-root",
                     repo.path().to_str().unwrap(),
-                    "startup",
+                    "event",
                 ])
                 .env("HERDR_BIN_PATH", &fake)
+                .env("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+                .env(
+                    "HERDR_PLUGIN_EVENT_JSON",
+                    r#"{"event":"pane.agent_status_changed","data":{"pane_id":"pane-lead","agent_status":"idle"}}"#,
+                )
                 .output()
                 .unwrap();
             assert!(
-                startup.status.success(),
+                idle.status.success(),
                 "{}",
-                String::from_utf8_lossy(&startup.stderr)
+                String::from_utf8_lossy(&idle.stderr)
             );
-            let startup: serde_json::Value = serde_json::from_slice(&startup.stdout).unwrap();
-            assert_eq!(startup["reconciled"], 1);
-            assert!(startup["cleanup_warnings"].as_array().unwrap().is_empty());
+            let idle: serde_json::Value = serde_json::from_slice(&idle.stdout).unwrap();
+            assert_eq!(idle["lead"], true);
+            assert_eq!(idle["reconciled"], 1);
+            assert!(idle["cleanup_warnings"].as_array().unwrap().is_empty());
 
             let cleaned = cadence(repo.path(), state.path(), &["agent", "status", "agent-1"]);
             completed = serde_json::from_slice(&cleaned.stdout).unwrap();
@@ -983,6 +1009,79 @@ fi
             let stale_startup: serde_json::Value =
                 serde_json::from_slice(&stale_startup.stdout).unwrap();
             assert_eq!(stale_startup["reconciled"], 1);
+
+            let state_path = state.path().join("state.json");
+            let mut limited: serde_json::Value =
+                serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+            let project = limited["projects"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+                .next()
+                .unwrap();
+            let agent = &mut project["runs"][&active_run]["agents"]["agent-1"];
+            agent["tab_id"] = "retry-limit-tab".into();
+            agent["cleanup_attempts"] = 1.into();
+            fs::write(&state_path, serde_json::to_vec_pretty(&limited).unwrap()).unwrap();
+            fs::write(&tab_close_failure, "1\n").unwrap();
+
+            let exhausted = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+                .args([
+                    "--state-dir",
+                    state.path().to_str().unwrap(),
+                    "--project-root",
+                    repo.path().to_str().unwrap(),
+                    "event",
+                ])
+                .env("HERDR_BIN_PATH", &fake)
+                .env("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+                .env(
+                    "HERDR_PLUGIN_EVENT_JSON",
+                    r#"{"event":"pane.agent_status_changed","data":{"pane_id":"pane-lead","agent_status":"idle"}}"#,
+                )
+                .output()
+                .unwrap();
+            assert!(exhausted.status.success());
+            let exhausted: serde_json::Value = serde_json::from_slice(&exhausted.stdout).unwrap();
+            assert_eq!(exhausted["reconciled"], 0);
+            assert_eq!(exhausted["cleanup_warnings"].as_array().unwrap().len(), 1);
+            assert!(
+                exhausted["cleanup_warnings"][0]
+                    .as_str()
+                    .unwrap()
+                    .contains("manual cleanup is required")
+            );
+
+            let exhausted_status =
+                cadence(repo.path(), state.path(), &["agent", "status", "agent-1"]);
+            let exhausted_status: serde_json::Value =
+                serde_json::from_slice(&exhausted_status.stdout).unwrap();
+            assert_eq!(exhausted_status["cleanup_attempts"], 2);
+
+            let no_third_attempt = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+                .args([
+                    "--state-dir",
+                    state.path().to_str().unwrap(),
+                    "--project-root",
+                    repo.path().to_str().unwrap(),
+                    "event",
+                ])
+                .env("HERDR_BIN_PATH", &fake)
+                .env("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+                .env(
+                    "HERDR_PLUGIN_EVENT_JSON",
+                    r#"{"event":"pane.agent_status_changed","data":{"pane_id":"pane-lead","agent_status":"idle"}}"#,
+                )
+                .output()
+                .unwrap();
+            assert!(no_third_attempt.status.success());
+            assert_eq!(
+                fs::read_to_string(&log)
+                    .unwrap()
+                    .matches("tab close retry-limit-tab")
+                    .count(),
+                1
+            );
         } else {
             assert!(
                 integrate.status.success(),

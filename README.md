@@ -51,6 +51,7 @@ It never creates or changes `AGENTS.md`; role and task context is injected when 
 The Lead can start while the repository has uncommitted changes and may inspect or handle small work directly.
 Starting Cadence opens a focused Lead tab in the invoking Herdr workspace; it leaves the current pane alone and uses that workspace as the shared-checkout base for agents.
 Agent creation remains blocked until the base checkout is committed or stashed so every agent receives a stable baseline; worktree integration also requires a clean base checkout.
+Failed post-integration cleanup is retried once when the Lead is next idle and no agent work remains pending; a second failure requires manual cleanup.
 
 ## Codex approvals
 

@@ -92,6 +92,8 @@ pub struct Agent {
     pub report: Option<AgentReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cleanup_attempts: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -219,6 +221,10 @@ fn generalist_role() -> String {
 
 fn worktree_enabled() -> bool {
     true
+}
+
+fn is_zero(value: &u8) -> bool {
+    *value == 0
 }
 
 pub fn normalize_scope(value: &str) -> anyhow::Result<String> {
