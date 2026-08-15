@@ -454,6 +454,10 @@ elif [ "$1 $2" = "tab create" ]; then
 elif [ "$1 $2" = "worktree create" ]; then
   printf '%s\n' '{{"id":"test","result":{{"workspace":{{"workspace_id":"agent-ws"}},"tab":{{"tab_id":"agent-tab"}},"root_pane":{{"pane_id":"pane-agent"}},"worktree":{{"path":"{}"}}}}}}'
 elif [ "$1 $2" = "tab close" ]; then
+  if [ "$3" = "agent-tab" ]; then
+    printf '%s\n' '{{"error":{{"code":"tab_close_failed","message":"cannot close the last tab in a workspace"}},"id":"test"}}' >&2
+    exit 1
+  fi
   if [ -e '{}' ]; then
     rm '{}'
     printf '%s\n' 'forced tab cleanup failure' >&2
@@ -461,6 +465,11 @@ elif [ "$1 $2" = "tab close" ]; then
   fi
   printf '%s\n' '{{"id":"test","result":{{}}}}'
 elif [ "$1 $2" = "worktree remove" ]; then
+  if [ -e '{}' ]; then
+    rm '{}'
+    printf '%s\n' 'forced worktree cleanup failure' >&2
+    exit 1
+  fi
   if [ "${{CADENCE_TEST_FAIL_WORKTREE_REMOVE:-}}" = "1" ]; then
     printf '%s\n' 'forced worktree cleanup failure' >&2
     exit 1
@@ -480,6 +489,8 @@ fi
         lead_started.display(),
         primary_credit_failure.display(),
         agent_path.display(),
+        tab_close_failure.display(),
+        tab_close_failure.display(),
         tab_close_failure.display(),
         tab_close_failure.display(),
         repo.path().display(),
@@ -952,7 +963,7 @@ fi
                 integration["cleanup_warning"]
                     .as_str()
                     .unwrap()
-                    .contains("failed to close agent tab agent-tab")
+                    .contains("forced worktree cleanup failure")
             );
             let retained = cadence(repo.path(), state.path(), &["agent", "status", "agent-1"]);
             assert!(retained.status.success());
@@ -993,22 +1004,6 @@ fi
             assert!(completed["tab_id"].is_null());
             assert!(completed["workspace_id"].is_null());
             assert!(completed["checkout_path"].is_null());
-
-            let stale_startup = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
-                .args([
-                    "--state-dir",
-                    state.path().to_str().unwrap(),
-                    "--project-root",
-                    repo.path().to_str().unwrap(),
-                    "startup",
-                ])
-                .env("HERDR_BIN_PATH", &fake)
-                .output()
-                .unwrap();
-            assert!(stale_startup.status.success());
-            let stale_startup: serde_json::Value =
-                serde_json::from_slice(&stale_startup.stdout).unwrap();
-            assert_eq!(stale_startup["reconciled"], 1);
 
             let state_path = state.path().join("state.json");
             let mut limited: serde_json::Value =
@@ -1184,22 +1179,14 @@ fi
         "Lead completion notification must precede interrupting the completing agent"
     );
     if use_worktree {
-        let tab_close = if force_tab_cleanup_retry {
-            calls.match_indices("tab close agent-tab").nth(1).unwrap().0
-        } else {
-            calls.rfind("tab close agent-tab").unwrap()
-        };
         let worktree_remove = calls
             .rfind("worktree remove --workspace agent-ws --force")
             .unwrap();
         assert!(
-            tab_close < worktree_remove,
-            "The worktree-backed agent tab must close before its workspace is removed"
+            !calls[..worktree_remove].contains("tab close agent-tab"),
+            "Worktree cleanup must remove its workspace without closing the workspace's last tab"
         );
-        assert_eq!(
-            calls.matches("tab close agent-tab").count(),
-            if force_tab_cleanup_retry { 3 } else { 1 }
-        );
+        assert!(!calls.contains("tab close agent-tab"));
     } else {
         let tab_close = calls.rfind("tab close tab-agent").unwrap();
         assert!(

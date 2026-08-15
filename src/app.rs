@@ -825,6 +825,7 @@ impl App {
                 .collect::<Vec<_>>();
             let mut reconciled = 0usize;
             let mut cleanup_warnings = Vec::new();
+            let mut failed_agents = Vec::new();
             for agent_id in pending {
                 match self.cleanup_agent(&key, &agent_id) {
                     Ok(()) => reconciled += 1,
@@ -832,10 +833,28 @@ impl App {
                         let warning = format!(
                             "Agent {agent_id} cleanup retry failed; automatic cleanup has stopped and manual cleanup is required: {error:#}"
                         );
-                        self.notify(&key, &warning);
+                        failed_agents.push(agent_id);
                         cleanup_warnings.push(warning);
                     }
                 }
+            }
+            if let Some(first_warning) = cleanup_warnings.first() {
+                let displayed = failed_agents.iter().take(5).cloned().collect::<Vec<_>>();
+                let remaining = failed_agents.len().saturating_sub(displayed.len());
+                let remaining = if remaining == 0 {
+                    String::new()
+                } else {
+                    format!(" and {remaining} more")
+                };
+                self.notify(
+                    &key,
+                    &format!(
+                        "Cleanup retry failed for {} integrated agent(s) ({}{}); automatic cleanup has stopped and manual cleanup is required. First error: {first_warning}",
+                        failed_agents.len(),
+                        displayed.join(", "),
+                        remaining
+                    ),
+                );
             }
             return Ok(json!({
                 "handled": true,
@@ -1160,36 +1179,18 @@ impl App {
         let agent = run.agents.get(agent_id).context("unknown agent")?.clone();
         let attempt = next_cleanup_attempt(agent.cleanup_attempts)?;
         let result = (|| -> Result<()> {
-            let tab_id = match agent.tab_id.clone() {
-                Some(tab_id) => Some(tab_id),
-                None => self.herdr.agent_tab_id(&agent.agent_name)?,
-            };
-            if let Some(tab_id) = tab_id
-                && let Err(close_error) = self.herdr.close_tab(&tab_id)
-            {
-                match self.herdr.tab_exists(&tab_id) {
-                    Ok(false) => {}
-                    Ok(true) => {
-                        return Err(close_error)
-                            .with_context(|| format!("failed to close agent tab {tab_id}"));
-                    }
-                    Err(check_error) => {
-                        return Err(close_error).with_context(|| {
-                        format!(
-                            "failed to close agent tab {tab_id}; could not confirm whether it still exists: {check_error:#}"
-                        )
-                    });
-                    }
-                }
-            }
             if agent.use_worktree {
-                if let Some(workspace_id) = agent.workspace_id.as_deref()
-                    && self.herdr.workspace_exists(workspace_id)
-                {
-                    self.herdr.remove_worktree(workspace_id)?;
+                if let Some(workspace_id) = agent.workspace_id.as_deref() {
+                    if self.herdr.workspace_exists(workspace_id) {
+                        self.herdr.remove_worktree(workspace_id)?;
+                    }
+                } else {
+                    self.cleanup_agent_tab(&agent)?;
                 }
                 let root = PathBuf::from(self.project_root_for_key(key)?);
                 git::delete_branch(&root, &agent.branch)?;
+            } else {
+                self.cleanup_agent_tab(&agent)?;
             }
             self.state.update(|store| {
                 let stored = agent_mut(active_run_mut(store, key)?, agent_id)?;
@@ -1210,6 +1211,32 @@ impl App {
             return Err(error).context(format!(
                 "cleanup attempt {attempt} of {MAX_CLEANUP_ATTEMPTS} failed"
             ));
+        }
+        Ok(())
+    }
+
+    fn cleanup_agent_tab(&self, agent: &Agent) -> Result<()> {
+        let tab_id = match agent.tab_id.clone() {
+            Some(tab_id) => Some(tab_id),
+            None => self.herdr.agent_tab_id(&agent.agent_name)?,
+        };
+        if let Some(tab_id) = tab_id
+            && let Err(close_error) = self.herdr.close_tab(&tab_id)
+        {
+            match self.herdr.tab_exists(&tab_id) {
+                Ok(false) => {}
+                Ok(true) => {
+                    return Err(close_error)
+                        .with_context(|| format!("failed to close agent tab {tab_id}"));
+                }
+                Err(check_error) => {
+                    return Err(close_error).with_context(|| {
+                        format!(
+                            "failed to close agent tab {tab_id}; could not confirm whether it still exists: {check_error:#}"
+                        )
+                    });
+                }
+            }
         }
         Ok(())
     }
