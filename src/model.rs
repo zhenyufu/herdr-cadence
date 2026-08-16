@@ -228,8 +228,19 @@ fn is_zero(value: &u8) -> bool {
 }
 
 pub fn normalize_scope(value: &str) -> anyhow::Result<String> {
-    let value = value.trim().trim_start_matches("./").trim_end_matches('/');
+    let raw = value.trim().trim_start_matches("./").trim_end_matches('/');
+    // Scopes are literal paths matched by directory prefix, so a trailing `/**`
+    // or `/*` is redundant; accept it and reduce it to the directory it means.
+    let value = raw
+        .strip_suffix("/**")
+        .or_else(|| raw.strip_suffix("/*"))
+        .unwrap_or(raw)
+        .trim_end_matches('/');
     anyhow::ensure!(!value.is_empty(), "scope cannot contain an empty path");
+    anyhow::ensure!(
+        !value.contains(['*', '?', '[', ']']),
+        "scope paths are literal repository-relative paths, not globs: {raw}. Use the directory itself; it already covers everything under it"
+    );
     let path = std::path::Path::new(value);
     anyhow::ensure!(
         !path.is_absolute(),
@@ -293,6 +304,19 @@ mod tests {
         assert_eq!(normalize_scope("./src/api/").unwrap(), "src/api");
         assert!(normalize_scope("../secret").is_err());
         assert!(normalize_scope("/tmp/file").is_err());
+    }
+
+    #[test]
+    fn reduces_trailing_wildcards_and_rejects_other_globs() {
+        assert_eq!(normalize_scope("apps/journal/**").unwrap(), "apps/journal");
+        assert_eq!(normalize_scope("apps/journal/*").unwrap(), "apps/journal");
+        assert_eq!(
+            normalize_scope("./apps/journal/**/").unwrap(),
+            "apps/journal"
+        );
+        assert!(normalize_scope("apps/*/journal").is_err());
+        assert!(normalize_scope("apps/**/*.ts").is_err());
+        assert!(normalize_scope("**").is_err());
     }
 
     #[test]

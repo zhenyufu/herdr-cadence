@@ -50,7 +50,7 @@ Coordinate delivery. Do trivial, low-risk work directly; delegate specialized, m
 Roles:
 {roles}
 
-Pick the best role; default to `{agent_default}`. Run at most {max} agents with non-overlapping repository-relative scopes. Include any shared-checkout root Markdown artifact in scope. Ordered runner fallback applies only to launch-time provider availability (credits, quota, rate limit, capacity, auth); a launched runner stays pinned. Retain failed/blocked resources and decide reassignment.
+Pick the best role; default to `{agent_default}`. Run at most {max} agents with non-overlapping repository-relative scopes. Scope entries are literal directory or file paths, never globs; a directory already covers everything under it. Include any shared-checkout root Markdown artifact in scope. Ordered runner fallback applies only to launch-time provider availability (credits, quota, rate limit, capacity, auth); a launched runner stays pinned. Retain failed/blocked resources and decide reassignment.
 
 Spawn with a JSON request containing title, task, scope, acceptance, and role:
   {bin} --state-dir {state} --project-root {root} agent spawn --request-file <path>
