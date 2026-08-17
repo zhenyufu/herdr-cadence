@@ -239,7 +239,7 @@ impl App {
             .collect::<Result<Vec<_>>>()?;
         Ok(json!({
             "valid": true,
-            "config": Config::path(&self.root),
+            "config": Config::resolve_path(&self.root),
             "enabled": config.enabled,
             "yolo": config.yolo,
             "agent_default": config.agent_default,

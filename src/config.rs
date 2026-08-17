@@ -240,10 +240,46 @@ impl Config {
         project_root.join(CONFIG_RELATIVE_PATH)
     }
 
+    /// The user's global config, `~/.cadence.toml`, used as a fallback when a
+    /// project has no `.cadence.toml` of its own. `None` if `$HOME` is unset.
+    pub fn global_path() -> Option<PathBuf> {
+        Self::global_path_from(std::env::var_os("HOME"))
+    }
+
+    fn global_path_from(home: Option<std::ffi::OsString>) -> Option<PathBuf> {
+        home.filter(|home| !home.is_empty())
+            .map(|home| PathBuf::from(home).join(CONFIG_RELATIVE_PATH))
+    }
+
+    /// The config file that `load` would read for `project_root`: the project
+    /// config if present, else the global config if present, else `None`.
+    pub fn resolve_path(project_root: &Path) -> Option<PathBuf> {
+        Self::resolve_path_with_global(project_root, Self::global_path())
+    }
+
+    fn resolve_path_with_global(
+        project_root: &Path,
+        global_path: Option<PathBuf>,
+    ) -> Option<PathBuf> {
+        let project_path = Self::path(project_root);
+        if project_path.exists() {
+            return Some(project_path);
+        }
+        global_path.filter(|path| path.exists())
+    }
+
     pub fn load(project_root: &Path) -> Result<Self> {
-        let path = Self::path(project_root);
+        let path = Self::resolve_path(project_root).with_context(|| {
+            format!(
+                "Cadence is not enabled: neither {} nor {} exists",
+                Self::path(project_root).display(),
+                Self::global_path()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "a global config ($HOME is unset)".to_string())
+            )
+        })?;
         let raw = fs::read_to_string(&path)
-            .with_context(|| format!("Cadence is not enabled: {} is missing", path.display()))?;
+            .with_context(|| format!("failed to read Cadence config at {}", path.display()))?;
         let config: Self = toml::from_str(&raw)
             .with_context(|| format!("invalid Cadence config at {}", path.display()))?;
         config.validate()?;
@@ -825,5 +861,50 @@ cleanup_on_success = true
         let raw = DEFAULT_CONFIG_TOML
             .replace("runners = [\"codex-terra-medium\"]", "harness = \"codex\"");
         assert!(toml::from_str::<Config>(&raw).is_err());
+    }
+
+    #[test]
+    fn global_path_from_requires_a_nonempty_home() {
+        assert_eq!(Config::global_path_from(None), None);
+        assert_eq!(Config::global_path_from(Some("".into())), None);
+        assert_eq!(
+            Config::global_path_from(Some("/home/test".into())),
+            Some(PathBuf::from("/home/test/.cadence.toml"))
+        );
+    }
+
+    #[test]
+    fn resolve_path_prefers_project_config_over_global() {
+        let project = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+        let global_path = global.path().join(CONFIG_RELATIVE_PATH);
+        fs::write(&global_path, DEFAULT_CONFIG_TOML).unwrap();
+
+        // Global-only: falls back to the global config.
+        assert_eq!(
+            Config::resolve_path_with_global(project.path(), Some(global_path.clone())),
+            Some(global_path.clone())
+        );
+
+        // Both present: project config wins outright, global is not consulted.
+        let project_path = Config::path(project.path());
+        fs::write(&project_path, DEFAULT_CONFIG_TOML).unwrap();
+        assert_eq!(
+            Config::resolve_path_with_global(project.path(), Some(global_path.clone())),
+            Some(project_path)
+        );
+    }
+
+    #[test]
+    fn resolve_path_is_none_when_neither_config_exists() {
+        let project = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+        let missing_global_path = global.path().join(CONFIG_RELATIVE_PATH);
+
+        assert_eq!(
+            Config::resolve_path_with_global(project.path(), Some(missing_global_path)),
+            None
+        );
+        assert_eq!(Config::resolve_path_with_global(project.path(), None), None);
     }
 }

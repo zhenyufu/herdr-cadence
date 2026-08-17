@@ -63,6 +63,20 @@ fn cadence(root: &Path, state: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+fn cadence_with_home(root: &Path, state: &Path, home: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+        .args([
+            "--state-dir",
+            state.to_str().unwrap(),
+            "--project-root",
+            root.to_str().unwrap(),
+        ])
+        .args(args)
+        .env("HOME", home)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn enables_and_reports_project_status() {
     let repo = repo();
@@ -217,6 +231,102 @@ fn validates_and_resolves_project_config() {
             role["name"] == "qa" && role["version_control_mode"] == "shared-checkout"
         })
     );
+}
+
+#[test]
+fn falls_back_to_the_global_config_when_no_project_config_exists() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    fs::write(
+        home.path().join(".cadence.toml"),
+        herdr_cadence::config::DEFAULT_CONFIG_TOML,
+    )
+    .unwrap();
+
+    let status = cadence_with_home(
+        repo.path(),
+        state.path(),
+        home.path(),
+        &["action", "status"],
+    );
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(value["enabled"], true);
+    assert_eq!(value["config_valid"], true);
+
+    let validation = cadence_with_home(
+        repo.path(),
+        state.path(),
+        home.path(),
+        &["action", "validate-config"],
+    );
+    assert!(
+        validation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
+    assert_eq!(value["valid"], true);
+    assert_eq!(
+        value["config"],
+        home.path().join(".cadence.toml").to_str().unwrap()
+    );
+    assert!(!repo.path().join(".cadence.toml").exists());
+}
+
+#[test]
+fn project_config_overrides_the_global_config() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    // A global config that would fail validation if it were ever read.
+    fs::write(home.path().join(".cadence.toml"), "this is not valid toml").unwrap();
+
+    assert!(
+        cadence_with_home(repo.path(), state.path(), home.path(), &["action", "init"])
+            .status
+            .success()
+    );
+
+    let validation = cadence_with_home(
+        repo.path(),
+        state.path(),
+        home.path(),
+        &["action", "validate-config"],
+    );
+    assert!(
+        validation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
+    assert_eq!(value["valid"], true);
+    assert_eq!(
+        value["config"],
+        repo.path().join(".cadence.toml").to_str().unwrap()
+    );
+}
+
+#[test]
+fn reports_missing_config_when_neither_project_nor_global_config_exists() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+
+    let validation = cadence_with_home(
+        repo.path(),
+        state.path(),
+        home.path(),
+        &["action", "validate-config"],
+    );
+    assert!(!validation.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&validation.stderr).unwrap();
+    assert!(error["error"].as_str().unwrap().contains("not enabled"));
 }
 
 #[test]

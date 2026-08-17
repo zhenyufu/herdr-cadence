@@ -74,6 +74,10 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 
 `init` writes `.cadence.toml` from the [canonical initial configuration](src/config.rs).
 
+Cadence also reads a global config at `~/.cadence.toml`. A project's own `.cadence.toml`, if present, is used
+in full and the global config is ignored; only when a project has no `.cadence.toml` does Cadence fall back to
+the global config in full. There is no field-level merging between the two.
+
 ```toml
 schema_version = 2
 enabled = true
