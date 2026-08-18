@@ -164,19 +164,19 @@ retains its resources and tells the Lead to decide whether reassignment is safe.
 The `harness`, `model`, and `reasoning_effort` fields belong to runners, not
 roles; previous single-harness role configuration is unsupported.
 
-## Injected context
+## Orchestration overhead
 
-Cadence sends one compact startup prompt to each agent:
+Cadence's own token footprint has two parts: a one-time injected prompt per participant, and short ongoing status pings. It never injects source files, diffs, the full configuration or state store, other agents' tasks or reports, or conversation history—the selected harness loads repository instructions like `AGENTS.md` and inspects files on its own.
 
-- The Lead receives its run ID, coordination rules, checkout mode, concurrency limit, configured role names and descriptions, and the commands for managing agents and finishing the run.
+**Injected context** — one compact startup prompt per participant:
+
+- The Lead receives its run ID, coordination rules, checkout mode, concurrency limit, configured role names and descriptions, and the commands for managing agents and finishing the run. With the default role set this runs about 700–800 tokens, sent once when the Lead tab opens.
   It may handle trivial, low-risk work directly and delegates larger or specialized tasks. It commits each coherent, verified change block locally—whether Lead-authored or agent-integrated—while preserving unrelated edits, and pushes only when asked. For review cycles, it verifies blockers and security/data-integrity findings, consolidates corrections into one developer pass, limits the re-review to changed areas and prior blockers, and handles small findings itself after the second review.
-- An agent receives only its role and role description, assigned task, allowed path scope, acceptance criteria, checkout-specific Git instructions, priority labels, and the command for submitting its report.
+- An agent receives only its role and role description, assigned task, allowed path scope, acceptance criteria, checkout-specific Git instructions, priority labels, and the command for submitting its report—typically 350–400 tokens, sent once when its tab opens. Size scales with your task/scope/acceptance text, not with repository size.
 
 Leads and agents label findings as `High (Blockers)`, `Mid`, `Low`, or `Wish`.
 
-Cadence does not inject source files, diffs, the full configuration or state store, other agents' tasks or reports, or conversation history.
-The selected harness may independently load repository instructions such as `AGENTS.md` and inspect files as it works.
-Later Cadence messages are short status notifications to the Lead or explicit follow-up prompts sent to an agent.
+**Ongoing communication** — after startup, Cadence only sends short one-line status pings to the Lead (roughly 25–55 tokens each) on state transitions: an agent blocked, failed, completed, integrated, hit an integration conflict, went idle without reporting, fell back to another runner, or failed a cleanup retry. Most agents generate only a handful of these over their lifecycle. The Lead's own follow-up prompts to an agent (`agent prompt <id>`) are free text it writes and aren't templated or bounded by Cadence.
 
 
 ## Develop
