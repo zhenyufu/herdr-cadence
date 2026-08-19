@@ -6,8 +6,10 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_RELATIVE_PATH: &str = ".cadence.toml";
-/// File name of the global config inside Herdr's per-plugin config directory.
-pub const GLOBAL_CONFIG_FILE_NAME: &str = "cadence.toml";
+/// File names accepted for the global config inside Herdr's per-plugin config
+/// directory, canonical name first. The dotted name is accepted too because a
+/// project `.cadence.toml` promoted to the global config keeps its own name.
+pub const GLOBAL_CONFIG_FILE_NAMES: [&str; 2] = ["cadence.toml", ".cadence.toml"];
 pub const CONFIG_SCHEMA_VERSION: u32 = 2;
 pub const GENERALIST_ROLE: &str = "generalist";
 pub const DEFAULT_CONFIG_TOML: &str = r#"schema_version = 2
@@ -242,11 +244,25 @@ impl Config {
         project_root.join(CONFIG_RELATIVE_PATH)
     }
 
-    /// The user's global config, `cadence.toml` inside Herdr's per-plugin
-    /// config directory, used as a fallback when a project has no
-    /// `.cadence.toml` of its own. `None` when no config directory is known.
+    /// Every place a global config may live inside Herdr's per-plugin config
+    /// directory, in precedence order. Empty when no config directory is known.
+    pub fn global_paths(config_dir: Option<&Path>) -> Vec<PathBuf> {
+        config_dir
+            .map(|dir| {
+                GLOBAL_CONFIG_FILE_NAMES
+                    .iter()
+                    .map(|name| dir.join(name))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The global config in use: the first candidate that exists, so a
+    /// `cadence.toml` wins over a `.cadence.toml` beside it.
     pub fn global_path(config_dir: Option<&Path>) -> Option<PathBuf> {
-        config_dir.map(|dir| dir.join(GLOBAL_CONFIG_FILE_NAME))
+        Self::global_paths(config_dir)
+            .into_iter()
+            .find(|path| path.exists())
     }
 
     /// The config file that `load` would read for `project_root`: the project
@@ -256,19 +272,24 @@ impl Config {
         if project_path.exists() {
             return Some(project_path);
         }
-        Self::global_path(config_dir).filter(|path| path.exists())
+        Self::global_path(config_dir)
     }
 
     pub fn load(project_root: &Path, config_dir: Option<&Path>) -> Result<Self> {
         let path = Self::resolve_path(project_root, config_dir).with_context(|| {
+            let mut looked_in = vec![Self::path(project_root).display().to_string()];
+            if config_dir.is_some() {
+                looked_in.extend(
+                    Self::global_paths(config_dir)
+                        .iter()
+                        .map(|path| path.display().to_string()),
+                );
+            } else {
+                looked_in.push("a global config (no plugin config directory)".to_string());
+            }
             format!(
-                "Cadence is not enabled: neither {} nor {} exists",
-                Self::path(project_root).display(),
-                Self::global_path(config_dir)
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| {
-                        "a global config (no plugin config directory)".to_string()
-                    })
+                "Cadence is not enabled: no config at {}",
+                looked_in.join(" or ")
             )
         })?;
         let raw = fs::read_to_string(&path)
@@ -857,19 +878,38 @@ cleanup_on_success = true
     }
 
     #[test]
-    fn global_path_requires_a_config_dir() {
-        assert_eq!(Config::global_path(None), None);
+    fn global_paths_requires_a_config_dir() {
+        assert!(Config::global_paths(None).is_empty());
         assert_eq!(
-            Config::global_path(Some(Path::new("/config/herdr-cadence"))),
-            Some(PathBuf::from("/config/herdr-cadence/cadence.toml"))
+            Config::global_paths(Some(Path::new("/config/herdr-cadence"))),
+            vec![
+                PathBuf::from("/config/herdr-cadence/cadence.toml"),
+                PathBuf::from("/config/herdr-cadence/.cadence.toml"),
+            ]
         );
+        assert_eq!(Config::global_path(None), None);
+    }
+
+    #[test]
+    fn global_path_accepts_a_dotted_name_but_prefers_the_canonical_one() {
+        let global = tempfile::tempdir().unwrap();
+        let dotted = global.path().join(".cadence.toml");
+        let canonical = global.path().join("cadence.toml");
+
+        // A project config promoted to the global config keeps its dotted name.
+        fs::write(&dotted, DEFAULT_CONFIG_TOML).unwrap();
+        assert_eq!(Config::global_path(Some(global.path())), Some(dotted));
+
+        // With both present the canonical name wins.
+        fs::write(&canonical, DEFAULT_CONFIG_TOML).unwrap();
+        assert_eq!(Config::global_path(Some(global.path())), Some(canonical));
     }
 
     #[test]
     fn resolve_path_prefers_project_config_over_global() {
         let project = tempfile::tempdir().unwrap();
         let global = tempfile::tempdir().unwrap();
-        let global_path = global.path().join(GLOBAL_CONFIG_FILE_NAME);
+        let global_path = global.path().join(GLOBAL_CONFIG_FILE_NAMES[0]);
         fs::write(&global_path, DEFAULT_CONFIG_TOML).unwrap();
 
         // Global-only: falls back to the global config.

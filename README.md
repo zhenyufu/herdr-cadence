@@ -75,7 +75,9 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 `init` writes `.cadence.toml` from the [canonical initial configuration](src/config.rs).
 
 Cadence also reads a global config at `cadence.toml` inside Herdr's per-plugin config directory, which Herdr
-creates and passes as `HERDR_PLUGIN_CONFIG_DIR` (usually `~/.config/herdr/plugins/config/herdr-cadence`). A
+creates and passes as `HERDR_PLUGIN_CONFIG_DIR` (usually `~/.config/herdr/plugins/config/herdr-cadence`).
+A `.cadence.toml` in that directory works too, so a project config promoted to the global config can keep its
+own name; when both exist, `cadence.toml` wins. A
 project's own `.cadence.toml`, if present, is used in full and the global config is ignored; only when a project
 has no `.cadence.toml` does Cadence fall back to the global config in full. There is no field-level merging
 between the two.

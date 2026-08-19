@@ -281,6 +281,37 @@ fn falls_back_to_the_global_config_when_no_project_config_exists() {
 }
 
 #[test]
+fn accepts_a_dotted_global_config_file_name() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
+    // A project .cadence.toml moved into the config directory keeps its name.
+    fs::write(
+        config_dir.path().join(".cadence.toml"),
+        herdr_cadence::config::DEFAULT_CONFIG_TOML,
+    )
+    .unwrap();
+
+    let validation = cadence_with_config_dir(
+        repo.path(),
+        state.path(),
+        config_dir.path(),
+        &["action", "validate-config"],
+    );
+    assert!(
+        validation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
+    assert_eq!(value["valid"], true);
+    assert_eq!(
+        value["config"],
+        config_dir.path().join(".cadence.toml").to_str().unwrap()
+    );
+}
+
+#[test]
 fn reads_the_global_config_dir_from_the_herdr_plugin_env() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
