@@ -63,16 +63,17 @@ fn cadence(root: &Path, state: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn cadence_with_home(root: &Path, state: &Path, home: &Path, args: &[&str]) -> Output {
+fn cadence_with_config_dir(root: &Path, state: &Path, config_dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
         .args([
             "--state-dir",
             state.to_str().unwrap(),
             "--project-root",
             root.to_str().unwrap(),
+            "--config-dir",
+            config_dir.to_str().unwrap(),
         ])
         .args(args)
-        .env("HOME", home)
         .output()
         .unwrap()
 }
@@ -237,17 +238,17 @@ fn validates_and_resolves_project_config() {
 fn falls_back_to_the_global_config_when_no_project_config_exists() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
     fs::write(
-        home.path().join(".cadence.toml"),
+        config_dir.path().join("cadence.toml"),
         herdr_cadence::config::DEFAULT_CONFIG_TOML,
     )
     .unwrap();
 
-    let status = cadence_with_home(
+    let status = cadence_with_config_dir(
         repo.path(),
         state.path(),
-        home.path(),
+        config_dir.path(),
         &["action", "status"],
     );
     assert!(
@@ -259,10 +260,10 @@ fn falls_back_to_the_global_config_when_no_project_config_exists() {
     assert_eq!(value["enabled"], true);
     assert_eq!(value["config_valid"], true);
 
-    let validation = cadence_with_home(
+    let validation = cadence_with_config_dir(
         repo.path(),
         state.path(),
-        home.path(),
+        config_dir.path(),
         &["action", "validate-config"],
     );
     assert!(
@@ -274,29 +275,73 @@ fn falls_back_to_the_global_config_when_no_project_config_exists() {
     assert_eq!(value["valid"], true);
     assert_eq!(
         value["config"],
-        home.path().join(".cadence.toml").to_str().unwrap()
+        config_dir.path().join("cadence.toml").to_str().unwrap()
     );
     assert!(!repo.path().join(".cadence.toml").exists());
+}
+
+#[test]
+fn reads_the_global_config_dir_from_the_herdr_plugin_env() {
+    let repo = repo();
+    let state = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
+    fs::write(
+        config_dir.path().join("cadence.toml"),
+        herdr_cadence::config::DEFAULT_CONFIG_TOML,
+    )
+    .unwrap();
+
+    // No --config-dir flag: the directory comes from Herdr's plugin env var.
+    let validation = Command::new(env!("CARGO_BIN_EXE_herdr-cadence"))
+        .args([
+            "--state-dir",
+            state.path().to_str().unwrap(),
+            "--project-root",
+            repo.path().to_str().unwrap(),
+        ])
+        .args(["action", "validate-config"])
+        .env("HERDR_PLUGIN_CONFIG_DIR", config_dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        validation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&validation.stdout).unwrap();
+    assert_eq!(
+        value["config"],
+        config_dir.path().join("cadence.toml").to_str().unwrap()
+    );
 }
 
 #[test]
 fn project_config_overrides_the_global_config() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
     // A global config that would fail validation if it were ever read.
-    fs::write(home.path().join(".cadence.toml"), "this is not valid toml").unwrap();
+    fs::write(
+        config_dir.path().join("cadence.toml"),
+        "this is not valid toml",
+    )
+    .unwrap();
 
     assert!(
-        cadence_with_home(repo.path(), state.path(), home.path(), &["action", "init"])
-            .status
-            .success()
+        cadence_with_config_dir(
+            repo.path(),
+            state.path(),
+            config_dir.path(),
+            &["action", "init"]
+        )
+        .status
+        .success()
     );
 
-    let validation = cadence_with_home(
+    let validation = cadence_with_config_dir(
         repo.path(),
         state.path(),
-        home.path(),
+        config_dir.path(),
         &["action", "validate-config"],
     );
     assert!(
@@ -316,12 +361,12 @@ fn project_config_overrides_the_global_config() {
 fn reports_missing_config_when_neither_project_nor_global_config_exists() {
     let repo = repo();
     let state = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
 
-    let validation = cadence_with_home(
+    let validation = cadence_with_config_dir(
         repo.path(),
         state.path(),
-        home.path(),
+        config_dir.path(),
         &["action", "validate-config"],
     );
     assert!(!validation.status.success());

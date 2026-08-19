@@ -11,6 +11,10 @@ struct Cli {
     state_dir: Option<PathBuf>,
     #[arg(long, global = true, env = "CADENCE_PROJECT_ROOT")]
     project_root: Option<PathBuf>,
+    /// Directory holding the global `cadence.toml`, used when a project has no
+    /// `.cadence.toml`. Defaults to Herdr's per-plugin config directory.
+    #[arg(long, global = true, env = "CADENCE_CONFIG_DIR")]
+    config_dir: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -107,11 +111,17 @@ fn run() -> Result<()> {
         .state_dir
         .or_else(|| std::env::var_os("HERDR_PLUGIN_STATE_DIR").map(PathBuf::from))
         .context("CADENCE_STATE_DIR or HERDR_PLUGIN_STATE_DIR is required")?;
+    // Unlike the state directory this stays optional: without one there is
+    // simply no global config to fall back to.
+    let config_dir = cli
+        .config_dir
+        .or_else(|| std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").map(PathBuf::from))
+        .filter(|dir| !dir.as_os_str().is_empty());
     let runtime_only = matches!(&cli.command, Command::Startup | Command::Event);
     let app = if runtime_only {
-        App::new_runtime(root, state_dir)?
+        App::new_runtime(root, state_dir, config_dir)?
     } else {
-        App::new(root, state_dir)?
+        App::new(root, state_dir, config_dir)?
     };
     let value = match cli.command {
         Command::Action { action } => match action {

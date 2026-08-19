@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_RELATIVE_PATH: &str = ".cadence.toml";
+/// File name of the global config inside Herdr's per-plugin config directory.
+pub const GLOBAL_CONFIG_FILE_NAME: &str = "cadence.toml";
 pub const CONFIG_SCHEMA_VERSION: u32 = 2;
 pub const GENERALIST_ROLE: &str = "generalist";
 pub const DEFAULT_CONFIG_TOML: &str = r#"schema_version = 2
@@ -240,42 +242,33 @@ impl Config {
         project_root.join(CONFIG_RELATIVE_PATH)
     }
 
-    /// The user's global config, `~/.cadence.toml`, used as a fallback when a
-    /// project has no `.cadence.toml` of its own. `None` if `$HOME` is unset.
-    pub fn global_path() -> Option<PathBuf> {
-        Self::global_path_from(std::env::var_os("HOME"))
-    }
-
-    fn global_path_from(home: Option<std::ffi::OsString>) -> Option<PathBuf> {
-        home.filter(|home| !home.is_empty())
-            .map(|home| PathBuf::from(home).join(CONFIG_RELATIVE_PATH))
+    /// The user's global config, `cadence.toml` inside Herdr's per-plugin
+    /// config directory, used as a fallback when a project has no
+    /// `.cadence.toml` of its own. `None` when no config directory is known.
+    pub fn global_path(config_dir: Option<&Path>) -> Option<PathBuf> {
+        config_dir.map(|dir| dir.join(GLOBAL_CONFIG_FILE_NAME))
     }
 
     /// The config file that `load` would read for `project_root`: the project
     /// config if present, else the global config if present, else `None`.
-    pub fn resolve_path(project_root: &Path) -> Option<PathBuf> {
-        Self::resolve_path_with_global(project_root, Self::global_path())
-    }
-
-    fn resolve_path_with_global(
-        project_root: &Path,
-        global_path: Option<PathBuf>,
-    ) -> Option<PathBuf> {
+    pub fn resolve_path(project_root: &Path, config_dir: Option<&Path>) -> Option<PathBuf> {
         let project_path = Self::path(project_root);
         if project_path.exists() {
             return Some(project_path);
         }
-        global_path.filter(|path| path.exists())
+        Self::global_path(config_dir).filter(|path| path.exists())
     }
 
-    pub fn load(project_root: &Path) -> Result<Self> {
-        let path = Self::resolve_path(project_root).with_context(|| {
+    pub fn load(project_root: &Path, config_dir: Option<&Path>) -> Result<Self> {
+        let path = Self::resolve_path(project_root, config_dir).with_context(|| {
             format!(
                 "Cadence is not enabled: neither {} nor {} exists",
                 Self::path(project_root).display(),
-                Self::global_path()
+                Self::global_path(config_dir)
                     .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "a global config ($HOME is unset)".to_string())
+                    .unwrap_or_else(|| {
+                        "a global config (no plugin config directory)".to_string()
+                    })
             )
         })?;
         let raw = fs::read_to_string(&path)
@@ -864,12 +857,11 @@ cleanup_on_success = true
     }
 
     #[test]
-    fn global_path_from_requires_a_nonempty_home() {
-        assert_eq!(Config::global_path_from(None), None);
-        assert_eq!(Config::global_path_from(Some("".into())), None);
+    fn global_path_requires_a_config_dir() {
+        assert_eq!(Config::global_path(None), None);
         assert_eq!(
-            Config::global_path_from(Some("/home/test".into())),
-            Some(PathBuf::from("/home/test/.cadence.toml"))
+            Config::global_path(Some(Path::new("/config/herdr-cadence"))),
+            Some(PathBuf::from("/config/herdr-cadence/cadence.toml"))
         );
     }
 
@@ -877,20 +869,20 @@ cleanup_on_success = true
     fn resolve_path_prefers_project_config_over_global() {
         let project = tempfile::tempdir().unwrap();
         let global = tempfile::tempdir().unwrap();
-        let global_path = global.path().join(CONFIG_RELATIVE_PATH);
+        let global_path = global.path().join(GLOBAL_CONFIG_FILE_NAME);
         fs::write(&global_path, DEFAULT_CONFIG_TOML).unwrap();
 
         // Global-only: falls back to the global config.
         assert_eq!(
-            Config::resolve_path_with_global(project.path(), Some(global_path.clone())),
-            Some(global_path.clone())
+            Config::resolve_path(project.path(), Some(global.path())),
+            Some(global_path)
         );
 
         // Both present: project config wins outright, global is not consulted.
         let project_path = Config::path(project.path());
         fs::write(&project_path, DEFAULT_CONFIG_TOML).unwrap();
         assert_eq!(
-            Config::resolve_path_with_global(project.path(), Some(global_path.clone())),
+            Config::resolve_path(project.path(), Some(global.path())),
             Some(project_path)
         );
     }
@@ -899,12 +891,11 @@ cleanup_on_success = true
     fn resolve_path_is_none_when_neither_config_exists() {
         let project = tempfile::tempdir().unwrap();
         let global = tempfile::tempdir().unwrap();
-        let missing_global_path = global.path().join(CONFIG_RELATIVE_PATH);
 
         assert_eq!(
-            Config::resolve_path_with_global(project.path(), Some(missing_global_path)),
+            Config::resolve_path(project.path(), Some(global.path())),
             None
         );
-        assert_eq!(Config::resolve_path_with_global(project.path(), None), None);
+        assert_eq!(Config::resolve_path(project.path(), None), None);
     }
 }

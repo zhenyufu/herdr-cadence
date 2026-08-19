@@ -3,9 +3,18 @@ use std::path::Path;
 use crate::config::Config;
 use crate::model::{Agent, Run};
 
+/// The `--config-dir` flag to append to the invocations the Lead and its agents
+/// are told to run, empty when no global config directory is in play.
+fn config_flag(config_dir: Option<&Path>) -> String {
+    config_dir
+        .map(|dir| format!(" --config-dir {}", dir.display()))
+        .unwrap_or_default()
+}
+
 pub fn lead(
     binary: &Path,
     state_dir: &Path,
+    config_dir: Option<&Path>,
     project_root: &Path,
     run: &Run,
     config: &Config,
@@ -53,7 +62,7 @@ Roles:
 Pick the best role; default to `{agent_default}`. Run at most {max} agents with non-overlapping repository-relative scopes. Scope entries are literal directory or file paths, never globs; a directory already covers everything under it. Include any shared-checkout root Markdown artifact in scope. Ordered runner fallback applies only to launch-time provider availability (credits, quota, rate limit, capacity, auth); a launched runner stays pinned. Retain failed/blocked resources and decide reassignment.
 
 Spawn with a JSON request containing title, task, scope, acceptance, and role:
-  {bin} --state-dir {state} --project-root {root} agent spawn --request-file <path>
+  {bin} --state-dir {state}{config} --project-root {root} agent spawn --request-file <path>
 Manage with `agent list|status|report`, `agent prompt <id> --prompt-file <path>`, and `agent cancel <id>`. {integration_guidance}
 
 For each coherent change block: verify, stage only task paths, and commit locally before continuing or reporting; this includes Lead and integrated agent work. Preserve unrelated changes; push only on request. Handle routine verification; ask the user only about material scope, destructive actions, or retained conflicts.
@@ -66,6 +75,7 @@ Use spawn `display_name` in user updates (not Agent 2/agent-2); reserve IDs for 
         run_id = run.id,
         bin = binary.display(),
         state = state_dir.display(),
+        config = config_flag(config_dir),
         root = project_root.display(),
         roles = roles,
         agent_default = config.agent_default,
@@ -80,6 +90,7 @@ Use spawn `display_name` in user updates (not Agent 2/agent-2); reserve IDs for 
 pub fn agent(
     binary: &Path,
     state_dir: &Path,
+    config_dir: Option<&Path>,
     project_root: &Path,
     run_id: &str,
     agent: &Agent,
@@ -124,7 +135,7 @@ Acceptance criteria:
 {acceptance}
 
 Follow repository instructions. Modify only the allowed scope and run relevant tests. Label communicated findings as High (Blockers), Mid, Low, or Wish. {permission_guidance} {git_guidance} Then write a JSON report with status (completed, blocked, or failed), summary, tests, changed_paths, blockers, and optional commit_sha. Submit it with:
-  {bin} --state-dir {state} --project-root {root} agent complete {agent_id} --report-file <path>
+  {bin} --state-dir {state}{config} --project-root {root} agent complete {agent_id} --report-file <path>
 
 If completion returns integrated, exit the agent. If it returns completed, remain available while the Lead reviews your report, then exit when Cadence says the commit was accepted. If blocked, remain available for a Lead follow-up."#,
         task = agent.task,
@@ -137,6 +148,7 @@ If completion returns integrated, exit the agent. If it returns completed, remai
         permission_guidance = permission_guidance,
         bin = binary.display(),
         state = state_dir.display(),
+        config = config_flag(config_dir),
         root = project_root.display(),
         agent_id = agent.id,
     )
@@ -177,6 +189,7 @@ mod tests {
         let prompt = lead(
             Path::new("/cadence"),
             Path::new("/state"),
+            Some(Path::new("/config")),
             Path::new("/project"),
             &run,
             &config,
@@ -188,5 +201,8 @@ mod tests {
             "Lead prompt is {} bytes",
             prompt.len()
         );
+        // Agents inherit no HERDR_PLUGIN_CONFIG_DIR, so the invocations the
+        // Lead is told to run must carry the directory explicitly.
+        assert!(prompt.contains("--state-dir /state --config-dir /config"));
     }
 }

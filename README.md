@@ -74,9 +74,18 @@ The rule applies to Cadence in any enabled project while remaining scoped to tha
 
 `init` writes `.cadence.toml` from the [canonical initial configuration](src/config.rs).
 
-Cadence also reads a global config at `~/.cadence.toml`. A project's own `.cadence.toml`, if present, is used
-in full and the global config is ignored; only when a project has no `.cadence.toml` does Cadence fall back to
-the global config in full. There is no field-level merging between the two.
+Cadence also reads a global config at `cadence.toml` inside Herdr's per-plugin config directory, which Herdr
+creates and passes as `HERDR_PLUGIN_CONFIG_DIR` (usually `~/.config/herdr/plugins/config/herdr-cadence`). A
+project's own `.cadence.toml`, if present, is used in full and the global config is ignored; only when a project
+has no `.cadence.toml` does Cadence fall back to the global config in full. There is no field-level merging
+between the two.
+
+Herdr sets `HERDR_PLUGIN_CONFIG_DIR` only for the commands it spawns itself, so the Lead exports the resolved
+directory as `CADENCE_CONFIG_DIR` and passes `--config-dir` in the commands it hands to agents. Override the
+directory for a single invocation with `--config-dir`.
+
+Note that `disable-project` always writes `.cadence.toml` in the project, so disabling a project that runs off
+the global config creates a project config rather than editing the global one.
 
 ```toml
 schema_version = 2

@@ -21,23 +21,35 @@ const MAX_CLEANUP_ATTEMPTS: u8 = 2;
 pub struct App {
     pub root: PathBuf,
     pub state: StateStore,
+    /// Herdr's per-plugin config directory, holding the global `cadence.toml`
+    /// that projects without their own `.cadence.toml` fall back to.
+    pub config_dir: Option<PathBuf>,
     pub binary: PathBuf,
     pub herdr: Herdr,
 }
 
 impl App {
-    pub fn new(root: PathBuf, state_dir: PathBuf) -> Result<Self> {
+    pub fn new(root: PathBuf, state_dir: PathBuf, config_dir: Option<PathBuf>) -> Result<Self> {
         let root = git::repository_root(&root)?;
-        Self::new_runtime(root, state_dir)
+        Self::new_runtime(root, state_dir, config_dir)
     }
 
-    pub fn new_runtime(root: PathBuf, state_dir: PathBuf) -> Result<Self> {
+    pub fn new_runtime(
+        root: PathBuf,
+        state_dir: PathBuf,
+        config_dir: Option<PathBuf>,
+    ) -> Result<Self> {
         Ok(Self {
             root,
             state: StateStore::new(state_dir),
+            config_dir,
             binary: std::env::current_exe().context("cannot resolve Cadence executable")?,
             herdr: Herdr::from_env(),
         })
+    }
+
+    fn global_config_dir(&self) -> Option<&Path> {
+        self.config_dir.as_deref()
     }
 
     pub fn init_project(&self) -> Result<Value> {
@@ -57,7 +69,7 @@ impl App {
         {
             bail!("finish the active Cadence run before disabling this project");
         }
-        let mut config = Config::load(&self.root)?;
+        let mut config = Config::load(&self.root, self.global_config_dir())?;
         config.enabled = false;
         config.save(&self.root)?;
         Ok(json!({"enabled": false, "config": Config::path(&self.root)}))
@@ -123,12 +135,17 @@ impl App {
         }
 
         let state_dir = self.state.dir().display().to_string();
-        let env = [
+        let mut env = vec![
             ("CADENCE_BIN", self.binary.display().to_string()),
             ("CADENCE_STATE_DIR", state_dir),
             ("CADENCE_PROJECT_ROOT", self.root.display().to_string()),
             ("CADENCE_RUN_ID", run.id.clone()),
         ];
+        // Herdr only sets HERDR_PLUGIN_CONFIG_DIR for the commands it spawns
+        // itself, so the Lead and its agents need it forwarded explicitly.
+        if let Some(config_dir) = self.global_config_dir() {
+            env.push(("CADENCE_CONFIG_DIR", config_dir.display().to_string()));
+        }
         let terminal = self
             .herdr
             .create_lead_tab(workspace_id, &self.root, &env)
@@ -157,6 +174,7 @@ impl App {
         let prompt = prompts::lead(
             &self.binary,
             self.state.dir(),
+            self.global_config_dir(),
             &self.root,
             &run,
             &config,
@@ -173,7 +191,7 @@ impl App {
     }
 
     pub fn status(&self) -> Result<Value> {
-        let config = Config::load(&self.root);
+        let config = Config::load(&self.root, self.global_config_dir());
         let key = project_key(&self.root);
         let store = self.state.read()?;
         let project = store.projects.get(&key);
@@ -221,7 +239,7 @@ impl App {
     }
 
     pub fn validate_config(&self) -> Result<Value> {
-        let config = Config::load(&self.root)?;
+        let config = Config::load(&self.root, self.global_config_dir())?;
         let roles = config
             .agents
             .roles
@@ -239,7 +257,7 @@ impl App {
             .collect::<Result<Vec<_>>>()?;
         Ok(json!({
             "valid": true,
-            "config": Config::resolve_path(&self.root),
+            "config": Config::resolve_path(&self.root, self.global_config_dir()),
             "enabled": config.enabled,
             "yolo": config.yolo,
             "agent_default": config.agent_default,
@@ -390,7 +408,14 @@ impl App {
             Ok(())
         })?;
         let agent = self.start_agent_with_fallbacks(&key, agent, &terminal.pane_id, &runners)?;
-        let prompt = prompts::agent(&self.binary, self.state.dir(), &self.root, &run.id, &agent);
+        let prompt = prompts::agent(
+            &self.binary,
+            self.state.dir(),
+            self.global_config_dir(),
+            &self.root,
+            &run.id,
+            &agent,
+        );
         self.herdr.prompt_agent(&agent.agent_name, &prompt)?;
         self.state.update(|store| {
             agent_mut(active_run_mut(store, &key)?, &agent.id)?.status = AgentStatus::Working;
@@ -793,7 +818,7 @@ impl App {
             .context("event omitted pane_id")?;
         if let Some((key, run_id, run)) = self.find_run_by_lead_pane(pane_id)? {
             let project_root = PathBuf::from(self.project_root_for_key(&key)?);
-            let config = Config::load(&project_root)?;
+            let config = Config::load(&project_root, self.global_config_dir())?;
             if !config.enabled {
                 return Ok(json!({"ignored": true, "reason": "project is not enabled"}));
             }
@@ -869,7 +894,8 @@ impl App {
             return Ok(json!({"ignored": true, "reason": "pane is not owned by Cadence"}));
         };
         let project_root = PathBuf::from(self.project_root_for_key(&key)?);
-        if !Config::load(&project_root).is_ok_and(|config| config.enabled) {
+        if !Config::load(&project_root, self.global_config_dir()).is_ok_and(|config| config.enabled)
+        {
             return Ok(json!({"ignored": true, "reason": "project is not enabled"}));
         }
 
@@ -928,7 +954,7 @@ impl App {
         let mut cleanup_warnings = Vec::new();
         for (key, project) in store.projects {
             let root = PathBuf::from(&project.root);
-            let Ok(config) = Config::load(&root) else {
+            let Ok(config) = Config::load(&root, self.global_config_dir()) else {
                 continue;
             };
             if !config.enabled {
@@ -974,7 +1000,7 @@ impl App {
     }
 
     fn enabled_config(&self) -> Result<Config> {
-        let config = Config::load(&self.root)?;
+        let config = Config::load(&self.root, self.global_config_dir())?;
         ensure!(config.enabled, "Cadence is disabled for this project");
         Ok(config)
     }
