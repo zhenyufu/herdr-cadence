@@ -10,6 +10,7 @@ Cadence is a lightweight orchestration plugin for Herdr that provides one **Lead
 | Claude | — | Untested | Supported |
 | OpenCode | — | Untested | Untested |
 | Pi | — | Supported | Supported |
+| OMP (Oh My Pi) | `18.4.10` | Supported | Supported |
 
 - Codex
 
@@ -25,6 +26,14 @@ Cadence is a lightweight orchestration plugin for Herdr that provides one **Lead
   - Use a model in `provider/id` form (e.g. `zai/glm-5.3`).
   - Cadence passes a non-default `reasoning_effort` through Pi's `--thinking` flag. With `default`, model suffixes such as `zai/glm-5.3:high` pass through unchanged.
   - Cadence's `yolo` setting has no effect on Pi.
+
+- OMP ([Oh My Pi](https://github.com/can1357/oh-my-pi))
+
+  - Set `harness = "omp"` for the Lead or a runner. Cadence uses Herdr's native `omp` agent kind; enable the OMP integration with `herdr integration install omp` and check `herdr integration status` before launch.
+  - Models pass through unchanged via `--model`; non-default `reasoning_effort` maps to `--thinking`. With `default`, OMP's own thinking configuration is preserved.
+  - `yolo = false` explicitly selects `--approval-mode always-ask`: reads can proceed, while writes and execution may require approval. `yolo = true` passes `--auto-approve`; explicit tool/user deny or prompt policies still apply.
+  - Approval mode is not a filesystem or process sandbox. Worktrees and assigned scopes do not confine OMP's host access.
+  - Verified with Herdr client 0.9.3, server 0.9.1, and OMP integration v10. Older OMP/Herdr combinations have not been verified.
 
 ## Install and usage
 

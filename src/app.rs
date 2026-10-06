@@ -1771,6 +1771,7 @@ fn configured_agent_launch_args(
             state_dir.display().to_string(),
         ],
         (Harness::Opencode, _) => Vec::new(),
+        (Harness::Omp, _) => yolo_agent_args(harness, false),
         // pi needs no extra launch args; state-dir scoping is enforced by pi's
         // own working directory, and skills can be passed via agent_args.
         (Harness::Pi, _) => Vec::new(),
@@ -1799,10 +1800,16 @@ fn claude_agent_args(state_dir: &Path) -> Vec<String> {
 }
 
 fn yolo_agent_args(harness: Harness, yolo: bool) -> Vec<String> {
-    if !yolo {
-        return Vec::new();
-    }
     match harness {
+        // OMP otherwise inherits local approval defaults, even in non-yolo mode.
+        Harness::Omp => {
+            if yolo {
+                vec!["--auto-approve".into()]
+            } else {
+                vec!["--approval-mode".into(), "always-ask".into()]
+            }
+        }
+        _ if !yolo => Vec::new(),
         Harness::Claude => vec!["--dangerously-skip-permissions".into()],
         Harness::Codex => vec!["--dangerously-bypass-approvals-and-sandbox".into()],
         Harness::Opencode => vec!["--auto".into()],
@@ -2065,6 +2072,23 @@ mod tests {
             yolo_agent_args(Harness::Claude, true),
             ["--dangerously-skip-permissions"]
         );
+    }
+
+    #[test]
+    fn selects_explicit_omp_approvals_in_both_modes() {
+        let state_dir = Path::new("/tmp/cadence-state");
+        for (yolo, expected) in [
+            (false, vec!["--approval-mode", "always-ask"]),
+            (true, vec!["--auto-approve"]),
+        ] {
+            assert_eq!(yolo_agent_args(Harness::Omp, yolo), expected);
+            for use_worktree in [false, true] {
+                assert_eq!(
+                    configured_agent_launch_args(Harness::Omp, yolo, use_worktree, state_dir),
+                    expected
+                );
+            }
+        }
     }
 
     #[test]

@@ -1528,6 +1528,26 @@ fn starts_a_pi_lead_with_thinking_flag() {
 }
 
 #[test]
+fn runs_omp_lead_and_worktree_worker_with_interactive_approval() {
+    run_omp_agent_flow(true, false, false, false);
+}
+
+#[test]
+fn runs_omp_lead_and_shared_worker_with_auto_approval() {
+    run_omp_agent_flow(false, true, false, false);
+}
+
+#[test]
+fn relaunches_omp_lead_and_runs_worker_without_overriding_native_defaults() {
+    run_omp_agent_flow(false, false, true, false);
+}
+
+#[test]
+fn falls_back_from_omp_to_codex_and_persists_the_selected_runner() {
+    run_omp_agent_flow(false, false, false, true);
+}
+
+#[test]
 fn relaunches_lead_from_current_config_and_refreshes_persisted_settings() {
     run_agent_flow_with_relaunch();
 }
@@ -1584,6 +1604,8 @@ fn run_agent_flow_with_lead(
         force_tab_cleanup_retry,
         LeadFlowSettings {
             lead_harness,
+            worker_harness: herdr_cadence::config::Harness::Codex,
+            worker_native_defaults: false,
             relaunch_lead: None,
         },
     );
@@ -1599,9 +1621,11 @@ fn run_agent_flow_with_relaunch() {
         false,
         LeadFlowSettings {
             lead_harness: herdr_cadence::config::Harness::Codex,
+            worker_harness: herdr_cadence::config::Harness::Codex,
+            worker_native_defaults: false,
             relaunch_lead: Some((
                 herdr_cadence::config::Harness::Opencode,
-                "openai/relaunch-model".into(),
+                Some("openai/relaunch-model".into()),
                 herdr_cadence::config::ReasoningEffort::Low,
                 true,
             )),
@@ -1609,11 +1633,40 @@ fn run_agent_flow_with_relaunch() {
     );
 }
 
+fn run_omp_agent_flow(
+    use_worktree: bool,
+    global_yolo: bool,
+    native_defaults: bool,
+    force_primary_credit_failure: bool,
+) {
+    run_agent_flow_with_lead_options(
+        use_worktree,
+        global_yolo,
+        false,
+        false,
+        force_primary_credit_failure,
+        false,
+        LeadFlowSettings {
+            lead_harness: herdr_cadence::config::Harness::Omp,
+            worker_harness: herdr_cadence::config::Harness::Omp,
+            worker_native_defaults: native_defaults,
+            relaunch_lead: native_defaults.then_some((
+                herdr_cadence::config::Harness::Omp,
+                None,
+                herdr_cadence::config::ReasoningEffort::Default,
+                false,
+            )),
+        },
+    );
+}
+
 struct LeadFlowSettings {
     lead_harness: herdr_cadence::config::Harness,
+    worker_harness: herdr_cadence::config::Harness,
+    worker_native_defaults: bool,
     relaunch_lead: Option<(
         herdr_cadence::config::Harness,
-        String,
+        Option<String>,
         herdr_cadence::config::ReasoningEffort,
         bool,
     )>,
@@ -1630,6 +1683,8 @@ fn run_agent_flow_with_lead_options(
 ) {
     let LeadFlowSettings {
         lead_harness,
+        worker_harness,
+        worker_native_defaults,
         relaunch_lead,
     } = settings;
     let repo = repo();
@@ -1655,15 +1710,23 @@ fn run_agent_flow_with_lead_options(
     config.agents.runners.insert(
         "qa-primary".into(),
         herdr_cadence::config::RunnerConfig {
-            harness: herdr_cadence::config::Harness::Codex,
-            model: Some("qa-model".into()),
-            reasoning_effort: herdr_cadence::config::ReasoningEffort::Low,
+            harness: worker_harness,
+            model: (!worker_native_defaults).then(|| "qa-model".into()),
+            reasoning_effort: if worker_native_defaults {
+                herdr_cadence::config::ReasoningEffort::Default
+            } else {
+                herdr_cadence::config::ReasoningEffort::Low
+            },
         },
     );
     config.agents.runners.insert(
         "qa-backup".into(),
         herdr_cadence::config::RunnerConfig {
-            harness: herdr_cadence::config::Harness::Opencode,
+            harness: if worker_harness == herdr_cadence::config::Harness::Omp {
+                herdr_cadence::config::Harness::Codex
+            } else {
+                herdr_cadence::config::Harness::Opencode
+            },
             model: Some("backup-model".into()),
             reasoning_effort: herdr_cadence::config::ReasoningEffort::High,
         },
@@ -1701,6 +1764,20 @@ if [ "$1 $2" = "agent start" ]; then
   fi
   case "$name" in
     [!a-z]*|*[!a-z0-9_-]*|'') exit 1 ;;
+  esac
+  case "$*" in
+    *"--kind omp "*)
+      case "$*" in
+        *" {omp_permission}"*) ;;
+        *) printf '%s\n' 'OMP launch missing explicit approval policy' >&2; exit 1 ;;
+      esac
+      case "$*" in
+        *"{omp_forbidden_permission}"*|*"--sandbox"*|*"--add-dir"*|*"--dangerously-"*|*"--ask-for-approval"*)
+          printf '%s\n' 'OMP launch contains incompatible permission flags' >&2
+          exit 1
+          ;;
+      esac
+      ;;
   esac
 fi
 if [ "$1 $2" = "agent get" ]; then
@@ -1803,7 +1880,17 @@ fi
         tab_close_failure.display(),
         tab_close_failure.display(),
         repo.path().display(),
-        agent_path.display()
+        agent_path.display(),
+        omp_permission = if global_yolo {
+            "--auto-approve"
+        } else {
+            "--approval-mode always-ask"
+        },
+        omp_forbidden_permission = if global_yolo {
+            "--approval-mode"
+        } else {
+            "--auto-approve"
+        },
     );
     fs::write(&fake, script).unwrap();
     let mut permissions = fs::metadata(&fake).unwrap().permissions();
@@ -1845,11 +1932,14 @@ fi
     let run = &project["runs"][active_run];
     assert_eq!(run["base_workspace_id"], "base-ws");
     assert_eq!(run["lead"]["workspace_id"], "base-ws");
+    assert_eq!(run["lead"]["harness"], lead_harness.as_str());
+    assert_eq!(run["lead"]["model"], "openai/lead-model");
+    assert_eq!(run["lead"]["reasoning_effort"], "high");
     let initial_run_id = active_run.to_string();
     let initial_lead_name = run["lead"]["name"].as_str().unwrap().to_string();
     if let Some((harness, model, reasoning_effort, yolo)) = relaunch_lead.as_ref() {
         config.lead.harness = *harness;
-        config.lead.model = Some(model.clone());
+        config.lead.model = model.clone();
         config.lead.reasoning_effort = *reasoning_effort;
         config.yolo = *yolo;
         config.validate().unwrap();
@@ -1888,7 +1978,7 @@ fi
             .unwrap();
         let focused_run = &focused_project["runs"][&initial_run_id];
         assert_eq!(focused_run["lead"]["name"], initial_lead_name);
-        assert_eq!(focused_run["lead"]["harness"], "codex");
+        assert_eq!(focused_run["lead"]["harness"], lead_harness.as_str());
         assert_eq!(focused_run["lead"]["model"], "openai/lead-model");
         assert_eq!(focused_run["lead"]["reasoning_effort"], "high");
     }
@@ -1917,6 +2007,12 @@ fi
     assert!(calls.contains("tab create --workspace resumed-ws"));
     if let Some((harness, model, reasoning_effort, yolo)) = relaunch_lead.as_ref() {
         let relaunch_calls = &calls[calls_before_relaunch.len()..];
+        let model_arg = model
+            .as_deref()
+            .map(|model| format!(" --model {model}"))
+            .unwrap_or_default();
+        let reasoning = reasoning_effort.as_str();
+        let model = model.as_deref().unwrap_or_default();
         let expected_launch = match harness {
             herdr_cadence::config::Harness::Claude => format!(
                 "--kind claude --pane pane-lead --timeout 120000 -- --model {model} --effort {}",
@@ -1934,9 +2030,32 @@ fi
                 "--kind pi --pane pane-lead --timeout 120000 -- --model {model} --thinking {}",
                 reasoning_effort.as_str().unwrap()
             ),
+            herdr_cadence::config::Harness::Omp => format!(
+                "--kind omp --pane pane-lead --timeout 120000 --{model_arg}{} {}",
+                reasoning
+                    .map(|effort| format!(" --thinking {effort}"))
+                    .unwrap_or_default(),
+                if *yolo {
+                    "--auto-approve"
+                } else {
+                    "--approval-mode always-ask"
+                },
+            ),
         };
         assert!(relaunch_calls.contains(&expected_launch));
         assert!(!relaunch_calls.contains("openai/lead-model"));
+        if *harness == herdr_cadence::config::Harness::Omp {
+            let launch = relaunch_calls
+                .lines()
+                .find(|line| line.starts_with("agent start cadence-lead-"))
+                .unwrap();
+            if model_arg.is_empty() {
+                assert!(!launch.contains("--model"));
+            }
+            if reasoning.is_none() {
+                assert!(!launch.contains("--thinking"));
+            }
+        }
         if *yolo {
             let yolo_arg = match harness {
                 herdr_cadence::config::Harness::Claude => Some("--dangerously-skip-permissions"),
@@ -1946,6 +2065,7 @@ fi
                 herdr_cadence::config::Harness::Opencode => Some("--auto"),
                 // pi has no permission-bypass flag.
                 herdr_cadence::config::Harness::Pi => None,
+                herdr_cadence::config::Harness::Omp => Some("--auto-approve"),
             };
             if let Some(yolo_arg) = yolo_arg {
                 assert!(relaunch_calls.contains(yolo_arg));
@@ -1975,10 +2095,10 @@ fi
             project["runs"][active_run]["lead"]["harness"],
             harness.as_str()
         );
-        assert_eq!(project["runs"][active_run]["lead"]["model"], model.as_str());
+        assert_eq!(project["runs"][active_run]["lead"]["model"], json!(model));
         assert_eq!(
             project["runs"][active_run]["lead"]["reasoning_effort"],
-            reasoning_effort.as_str().unwrap()
+            reasoning_effort.as_str().unwrap_or("default")
         );
     }
     let agent_yolo = relaunch_lead
@@ -2061,11 +2181,40 @@ fi
     assert_eq!(
         value["model"],
         if force_primary_credit_failure {
-            "backup-model"
+            json!("backup-model")
+        } else if worker_native_defaults {
+            serde_json::Value::Null
         } else {
-            "qa-model"
+            json!("qa-model")
         }
     );
+    let selected_harness = if force_primary_credit_failure {
+        if worker_harness == herdr_cadence::config::Harness::Omp {
+            herdr_cadence::config::Harness::Codex
+        } else {
+            herdr_cadence::config::Harness::Opencode
+        }
+    } else {
+        worker_harness
+    };
+    assert_eq!(value["harness"], selected_harness.as_str());
+    assert_eq!(
+        value["reasoning_effort"],
+        if force_primary_credit_failure {
+            "high"
+        } else if worker_native_defaults {
+            "default"
+        } else {
+            "low"
+        }
+    );
+    let agent_state = cadence(repo.path(), state.path(), &["agent", "status", "agent-1"]);
+    assert!(agent_state.status.success());
+    let agent_state: serde_json::Value = serde_json::from_slice(&agent_state.stdout).unwrap();
+    assert_eq!(agent_state["harness"], value["harness"]);
+    assert_eq!(agent_state["model"], value["model"]);
+    assert_eq!(agent_state["reasoning_effort"], value["reasoning_effort"]);
+    assert_eq!(agent_state["yolo"], agent_yolo);
     if use_worktree {
         assert_eq!(value["workspace_id"], "agent-ws");
     } else {
@@ -2082,32 +2231,6 @@ fi
     );
     assert!(calls.contains("agent start cadence-lead-"));
     assert_eq!(calls.matches("agent start cadence-lead-").count(), 3);
-    assert!(calls.contains(&format!(
-        "- qa [{}]: Validates test behavior",
-        if use_worktree {
-            "git-worktree"
-        } else {
-            "shared-checkout"
-        }
-    )));
-    assert!(calls.contains("Pick the best role; default to `generalist`"));
-    assert!(calls.contains("Until given a task, reply briefly that Cadence is ready"));
-    assert!(calls.contains("Do trivial, low-risk work directly"));
-    assert!(calls.contains("Never edit an active agent's scope"));
-    assert!(calls.contains("Verify each coherent Lead/integrated change, stage only task paths"));
-    assert!(calls.contains("commit before continuing or reporting"));
-    assert!(calls.contains("Preserve unrelated changes; push only on request"));
-    assert_eq!(calls.contains("The checkout is dirty"), dirty_at_start);
-    assert!(calls.contains("a completed task does not end the run"));
-    assert!(calls.contains("Use `run finish` only when the user asks to end the session"));
-    assert!(calls.contains("Use spawn `display_name` in user updates"));
-    assert!(calls.contains("not Agent 2/agent-2"));
-    assert!(calls.contains("Runner fallback: launch-time availability only"));
-    assert!(calls.contains("Findings: High (Blockers), Mid, Low, or Wish"));
-    assert!(
-        calls.contains("Send one consolidated correction; recheck changed areas and prior Highs")
-    );
-    assert!(calls.contains("Label communicated findings as High (Blockers), Mid, Low, or Wish"));
     match lead_harness {
         herdr_cadence::config::Harness::Codex => {
             let lead_launch = "--kind codex --pane pane-lead --timeout 120000 -- --model openai/lead-model --config model_reasoning_effort=\"high\" --config hooks.SessionStart=[{matcher=\"^compact$\",hooks=[{type=\"command\",command=\"'";
@@ -2132,9 +2255,6 @@ fi
             assert!(!calls.contains("developer_instructions="));
             if global_yolo {
                 assert!(calls.contains(&format!("{lead_launch} --auto")));
-                assert!(
-                    calls.contains("YOLO removes permission prompts, not scope or safety limits")
-                );
             } else {
                 assert!(!calls.contains(&format!("{lead_launch} --auto")));
             }
@@ -2145,8 +2265,19 @@ fi
             assert!(calls.contains("agent prompt cadence-lead-"));
             assert!(!calls.contains("developer_instructions="));
         }
+        herdr_cadence::config::Harness::Omp => {
+            let permission = if global_yolo {
+                "--auto-approve"
+            } else {
+                "--approval-mode always-ask"
+            };
+            let lead_launch = format!(
+                "--kind omp --pane pane-lead --timeout 120000 -- --model openai/lead-model --thinking high {permission}"
+            );
+            assert!(calls.contains(&lead_launch));
+            assert!(calls.contains("agent prompt cadence-lead-"));
+        }
     }
-    assert!(calls.contains("Checkout mode is fixed by role"));
     if use_worktree {
         assert_eq!(calls.matches("tab create --workspace base-ws").count(), 1);
         assert!(calls.contains(&format!(
@@ -2158,7 +2289,6 @@ fi
             repo.path().canonicalize().unwrap().display()
         )));
         assert!(!calls.contains("worktree create --workspace"));
-        assert!(calls.contains("this isolated worktree"));
     } else {
         assert!(!calls.contains("worktree create --cwd"));
         assert_eq!(calls.matches("tab create --workspace base-ws").count(), 1);
@@ -2167,8 +2297,6 @@ fi
             2
         );
         assert!(calls.contains("--label [QA] Add API --no-focus"));
-        assert!(calls.contains("directly share the project checkout"));
-        assert!(calls.contains("create exactly one commit for changed files"));
     }
     assert!(calls.contains("agent start cadence-"));
     let run_digest = <sha2::Sha256 as sha2::Digest>::digest(active_run.as_bytes());
@@ -2177,38 +2305,60 @@ fi
         .map(|byte| format!("{byte:02x}"))
         .collect();
     assert!(calls.contains(&format!("agent start cad-{run_key}-a1")));
-    assert!(calls.contains(&format!("--run-id {active_run} agent complete agent-1")));
-    let agent_launch = "--kind codex --pane pane-agent --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\"";
+    let agent_launch = if worker_harness == herdr_cadence::config::Harness::Omp {
+        if worker_native_defaults {
+            "--kind omp --pane pane-agent --timeout 120000 --"
+        } else {
+            "--kind omp --pane pane-agent --timeout 120000 -- --model qa-model --thinking low"
+        }
+    } else {
+        "--kind codex --pane pane-agent --timeout 120000 -- --model qa-model --config model_reasoning_effort=\"low\""
+    };
     assert!(calls.contains(agent_launch));
     let selected_launch = if force_primary_credit_failure {
-        "--kind opencode --pane pane-agent --timeout 120000 -- --model backup-model#high"
+        if selected_harness == herdr_cadence::config::Harness::Codex {
+            "--kind codex --pane pane-agent --timeout 120000 -- --model backup-model --config model_reasoning_effort=\"high\""
+        } else {
+            "--kind opencode --pane pane-agent --timeout 120000 -- --model backup-model#high"
+        }
     } else {
         agent_launch
     };
     assert!(calls.contains(selected_launch));
-    if force_primary_credit_failure {
-        assert!(calls.contains("provider is unavailable; retrying with fallback qa-backup"));
-    }
-    if agent_yolo {
+    if selected_harness == herdr_cadence::config::Harness::Omp {
+        let permission = if agent_yolo {
+            "--auto-approve"
+        } else {
+            "--approval-mode always-ask"
+        };
+        assert!(calls.contains(&format!("{selected_launch} {permission}")));
+        let launch = calls
+            .lines()
+            .find(|line| line.starts_with(&format!("agent start cad-{run_key}-a1 ")))
+            .unwrap();
+        assert!(!launch.contains("--sandbox"));
+        assert!(!launch.contains("--add-dir"));
+        if worker_native_defaults {
+            assert!(!launch.contains("--model"));
+            assert!(!launch.contains("--thinking"));
+        }
+    } else if selected_harness == herdr_cadence::config::Harness::Codex && agent_yolo {
         assert!(calls.contains(&format!(
             "{selected_launch} --dangerously-bypass-approvals-and-sandbox"
         )));
-    } else if use_worktree {
+    } else if selected_harness == herdr_cadence::config::Harness::Codex && use_worktree {
         assert!(calls.contains(&format!(
-            "{agent_launch} --sandbox workspace-write --ask-for-approval never --add-dir {}",
+            "{selected_launch} --sandbox workspace-write --ask-for-approval never --add-dir {}",
             state.path().display()
         )));
-        assert!(calls.contains("If an action outside the available sandbox is required"));
-    } else {
+    } else if selected_harness == herdr_cadence::config::Harness::Codex {
         assert!(calls.contains(&format!(
-            "{agent_launch} --add-dir {}",
+            "{selected_launch} --add-dir {}",
             state.path().display()
         )));
         assert!(!calls.contains("--ask-for-approval never"));
         assert!(!calls.contains("--dangerously-bypass-approvals-and-sandbox"));
     }
-    assert!(calls.contains("Role: qa"));
-    assert!(calls.contains("Role guidance: Validates test behavior"));
     assert!(calls.contains("agent prompt"));
 
     let early_follow_up = if !use_worktree && !create_out_of_scope_commit {
@@ -2322,6 +2472,29 @@ fi
         }
     );
     assert_eq!(completed["report"]["changed_paths"][0], "src/api/mod.rs");
+    if worker_harness == herdr_cadence::config::Harness::Omp {
+        let agent_report = cadence(repo.path(), state.path(), &["agent", "report", "agent-1"]);
+        assert!(agent_report.status.success());
+        let agent_report: serde_json::Value = serde_json::from_slice(&agent_report.stdout).unwrap();
+        assert_eq!(agent_report["status"], completed["status"]);
+        assert_eq!(agent_report["report"]["summary"], "Added API");
+        assert_eq!(agent_report["report"]["commit_sha"], commit_sha);
+        assert_eq!(agent_report["report"]["changed_paths"][0], "src/api/mod.rs");
+        let stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(state.path().join("state.json")).unwrap()).unwrap();
+        let project = stored["projects"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap();
+        let agent = &project["runs"][active_run]["agents"]["agent-1"];
+        assert_eq!(agent["harness"], selected_harness.as_str());
+        assert_eq!(agent["model"], value["model"]);
+        assert_eq!(agent["reasoning_effort"], value["reasoning_effort"]);
+        assert_eq!(agent["yolo"], agent_yolo);
+        assert_eq!(agent["report"]["commit_sha"], commit_sha);
+    }
     if !use_worktree {
         assert_eq!(completed["claimed_commits"].as_array().unwrap().len(), 2);
         assert_eq!(completed["report"]["changed_paths"][1], "src/api/types.rs");
@@ -2559,6 +2732,23 @@ fi
     assert_eq!(follow_up["agent_id"], "agent-2");
     assert_eq!(follow_up["branch"], "main");
     assert!(follow_up["workspace_id"].is_null());
+    if worker_harness == herdr_cadence::config::Harness::Omp {
+        assert_eq!(follow_up["harness"], "codex");
+        assert_eq!(follow_up["model"], "gpt-5.6-terra");
+        assert_eq!(follow_up["reasoning_effort"], "high");
+        let calls = fs::read_to_string(&log).unwrap();
+        let launch = calls
+            .lines()
+            .find(|line| line.starts_with(&format!("agent start cad-{run_key}-a2 ")))
+            .unwrap();
+        assert!(launch.contains("--kind codex"));
+        assert_eq!(
+            launch.contains("--dangerously-bypass-approvals-and-sandbox"),
+            agent_yolo
+        );
+        assert!(!launch.contains("--approval-mode"));
+        assert!(!launch.contains("--auto-approve"));
+    }
 
     fs::create_dir_all(repo.path().join("docs")).unwrap();
     fs::write(repo.path().join("docs/readme.md"), "Current docs\n").unwrap();

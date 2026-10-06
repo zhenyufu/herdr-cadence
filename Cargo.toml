@@ -3,7 +3,7 @@ name = "herdr-cadence"
 version = "0.9.1"
 edition = "2024"
 license = "MIT"
-description = "Project-local Claude Code, Codex, OpenCode, and Pi orchestration for Herdr"
+description = "Project-local Claude Code, Codex, OpenCode, Pi, and OMP orchestration for Herdr"
 repository = "https://github.com/zhenyufu/herdr-cadence"
 
 [[bin]]

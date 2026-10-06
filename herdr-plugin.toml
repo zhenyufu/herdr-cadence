@@ -2,7 +2,7 @@ id = "herdr-cadence"
 name = "Cadence"
 version = "0.9.1"
 min_herdr_version = "0.7.5"
-description = "Orchestrate Claude Code, Codex, OpenCode, and Pi agents in shared or isolated Git checkouts"
+description = "Orchestrate Claude Code, Codex, OpenCode, Pi, and OMP agents in shared or isolated Git checkouts"
 platforms = ["linux", "macos"]
 
 [[build]]

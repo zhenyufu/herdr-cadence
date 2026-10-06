@@ -351,7 +351,9 @@ fn start_agent_args(
                 format!("model_reasoning_effort=\"{reasoning_effort}\""),
             ]),
             Harness::Opencode => {}
-            Harness::Pi => args.extend(["--thinking".into(), reasoning_effort.into()]),
+            Harness::Pi | Harness::Omp => {
+                args.extend(["--thinking".into(), reasoning_effort.into()])
+            }
         }
     }
     args.extend(agent_args.iter().cloned());
@@ -562,98 +564,104 @@ mod tests {
     }
 
     #[test]
-    fn passes_pi_model_and_thinking_level_to_pi() {
-        let args = start_agent_args(
-            "researcher",
-            Harness::Pi,
-            "pane-1",
-            Some("zai/glm-5.3-flash"),
-            ReasoningEffort::High,
-            &[],
-        )
-        .unwrap();
-
-        assert_eq!(
-            args,
-            [
-                "agent",
-                "start",
+    fn passes_pi_and_omp_models_with_an_explicit_thinking_override() {
+        for (harness, kind) in [(Harness::Pi, "pi"), (Harness::Omp, "omp")] {
+            let args = start_agent_args(
                 "researcher",
-                "--kind",
-                "pi",
-                "--pane",
+                harness,
                 "pane-1",
-                "--timeout",
-                "120000",
-                "--",
-                "--model",
-                "zai/glm-5.3-flash",
-                "--thinking",
-                "high",
-            ]
-        );
+                Some("zai/glm-5.3-flash:low"),
+                ReasoningEffort::High,
+                &[],
+            )
+            .unwrap();
+
+            assert_eq!(
+                args,
+                [
+                    "agent",
+                    "start",
+                    "researcher",
+                    "--kind",
+                    kind,
+                    "--pane",
+                    "pane-1",
+                    "--timeout",
+                    "120000",
+                    "--",
+                    "--model",
+                    "zai/glm-5.3-flash:low",
+                    "--thinking",
+                    "high",
+                ]
+            );
+        }
     }
 
     #[test]
-    fn preserves_pi_model_thinking_suffix_without_an_explicit_effort() {
-        let args = start_agent_args(
-            "researcher",
-            Harness::Pi,
-            "pane-1",
-            Some("zai/glm-5.3-flash:high"),
-            ReasoningEffort::Default,
-            &[],
-        )
-        .unwrap();
-
-        assert_eq!(
-            args,
-            [
-                "agent",
-                "start",
+    fn preserves_pi_and_omp_model_thinking_suffix_without_an_explicit_effort() {
+        for (harness, kind) in [(Harness::Pi, "pi"), (Harness::Omp, "omp")] {
+            let args = start_agent_args(
                 "researcher",
-                "--kind",
-                "pi",
-                "--pane",
+                harness,
                 "pane-1",
-                "--timeout",
-                "120000",
-                "--",
-                "--model",
-                "zai/glm-5.3-flash:high",
-            ]
-        );
+                Some("zai/glm-5.3-flash:high"),
+                ReasoningEffort::Default,
+                &[],
+            )
+            .unwrap();
+
+            assert_eq!(
+                args,
+                [
+                    "agent",
+                    "start",
+                    "researcher",
+                    "--kind",
+                    kind,
+                    "--pane",
+                    "pane-1",
+                    "--timeout",
+                    "120000",
+                    "--",
+                    "--model",
+                    "zai/glm-5.3-flash:high",
+                ]
+            );
+        }
     }
 
     #[test]
-    fn passes_pi_thinking_level_without_a_model() {
-        let args = start_agent_args(
-            "researcher",
-            Harness::Pi,
-            "pane-1",
-            None,
-            ReasoningEffort::Medium,
-            &[],
-        )
-        .unwrap();
-
-        assert_eq!(
-            args,
-            [
-                "agent",
-                "start",
+    fn passes_pi_and_omp_thinking_levels_without_a_model() {
+        for (harness, kind) in [(Harness::Pi, "pi"), (Harness::Omp, "omp")] {
+            let args = start_agent_args(
                 "researcher",
-                "--kind",
-                "pi",
-                "--pane",
+                harness,
                 "pane-1",
-                "--timeout",
-                "120000",
-                "--",
-                "--thinking",
-                "medium",
-            ]
-        );
+                None,
+                ReasoningEffort::Medium,
+                &[],
+            )
+            .unwrap();
+
+            assert_eq!(
+                args,
+                [
+                    "agent",
+                    "start",
+                    "researcher",
+                    "--kind",
+                    kind,
+                    "--pane",
+                    "pane-1",
+                    "--timeout",
+                    "120000",
+                    "--",
+                    "--thinking",
+                    "medium",
+                ]
+            );
+        }
     }
 
     #[test]

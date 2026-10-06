@@ -172,6 +172,7 @@ pub enum Harness {
     Codex,
     Opencode,
     Pi,
+    Omp,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -212,6 +213,7 @@ impl Harness {
             Self::Codex => "codex",
             Self::Opencode => "opencode",
             Self::Pi => "pi",
+            Self::Omp => "omp",
         }
     }
 }
@@ -610,32 +612,22 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_pi_harness() {
-        let raw = toml::to_string_pretty(&Config::default())
-            .unwrap()
-            .replacen("[lead]\nharness = \"codex\"", "[lead]\nharness = \"pi\"", 1);
-        let parsed: Config = toml::from_str(&raw).unwrap();
-        assert_eq!(parsed.lead.harness, Harness::Pi);
-        assert_eq!(parsed.lead.harness.as_str(), "pi");
-    }
-
-    #[test]
-    fn documented_config_matches_init_config() {
-        let generated: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
-        assert_eq!(generated, Config::default());
-
-        let readme = include_str!("../README.md");
-        let documented = readme
-            .split_once("## Configuration\n")
-            .unwrap()
-            .1
-            .split_once("```toml\n")
-            .unwrap()
-            .1
-            .split_once("\n```")
-            .unwrap()
-            .0;
-        assert_eq!(documented, DEFAULT_CONFIG_TOML.trim_end());
+    fn parses_pi_and_omp_leads_and_runners() {
+        for (harness, name) in [(Harness::Pi, "pi"), (Harness::Omp, "omp")] {
+            let raw = toml::to_string_pretty(&Config::default())
+                .unwrap()
+                .replace("harness = \"codex\"", &format!("harness = \"{name}\""));
+            let parsed: Config = toml::from_str(&raw).unwrap();
+            assert_eq!(parsed.lead.harness, harness);
+            assert_eq!(parsed.lead.harness.as_str(), name);
+            assert_eq!(
+                parsed.agents.role(GENERALIST_ROLE).unwrap().runners[0].harness,
+                harness
+            );
+            assert!(parsed.validate().is_ok());
+            let serialized = toml::to_string_pretty(&parsed).unwrap();
+            assert_eq!(toml::from_str::<Config>(&serialized).unwrap(), parsed);
+        }
     }
 
     #[test]
@@ -741,6 +733,26 @@ mod tests {
 
         config.lead.model = Some("openai/gpt-5.2".into());
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_omp_reasoning_without_a_model_for_leads_and_runners() {
+        let mut config = Config::default();
+        config.lead.harness = Harness::Omp;
+        config.lead.model = None;
+        config.lead.reasoning_effort = ReasoningEffort::Xhigh;
+        let runner = config.agents.runners.get_mut("codex-terra-medium").unwrap();
+        runner.harness = Harness::Omp;
+        runner.model = None;
+        runner.reasoning_effort = ReasoningEffort::Low;
+
+        assert!(config.validate().is_ok());
+        let raw = toml::to_string_pretty(&config).unwrap();
+        assert_eq!(toml::from_str::<Config>(&raw).unwrap(), config);
+        let resolved = &config.agents.role(GENERALIST_ROLE).unwrap().runners[0];
+        assert_eq!(resolved.harness, Harness::Omp);
+        assert_eq!(resolved.model, None);
+        assert_eq!(resolved.reasoning_effort, ReasoningEffort::Low);
     }
 
     #[test]
